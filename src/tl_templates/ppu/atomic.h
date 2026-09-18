@@ -15,7 +15,7 @@ using cutlass::half_t;
 #define TL_NOT_IMPLEMENTED()                                                   \
   {                                                                            \
     printf("%s not implemented\n", __PRETTY_FUNCTION__);                       \
-    __brkpt()                                                                  \
+    __brkpt();                                                                 \
   }
 template <typename T> struct normalize_atomic_type {
   using type = T;
@@ -486,16 +486,174 @@ AtomicAddx4Ret(dst_dtype *ref, ValType val,
   return tl_atomic_detail::AtomicAddx4ScalarRet(ref, add_val);
 }
 
-template <typename T> TL_DEVICE T AtomicLoad(T *ref, int memory_order) {
-  hggc::atomic_ref<T, hggc::thread_scope_device> aref(*ref);
+template <hggc::thread_scope Scope = hggc::thread_scope_device, typename T>
+TL_DEVICE T AtomicLoad(T *ref, int memory_order) {
+  hggc::atomic_ref<T, Scope> aref(*ref);
   return aref.load(hggc::memory_order(memory_order));
 }
 
-template <typename T1, typename T2>
+template <hggc::thread_scope Scope = hggc::thread_scope_device, typename T1,
+          typename T2>
 TL_DEVICE void AtomicStore(T1 *ref, T2 value, int memory_order) {
   using NT1 = typename normalize_atomic_type<T1>::type;
-  hggc::atomic_ref<NT1, hggc::thread_scope_device> aref(*ref);
+  hggc::atomic_ref<NT1, Scope> aref(*reinterpret_cast<NT1 *>(ref));
   aref.store(hggc_cast<NT1>(value), hggc::memory_order(memory_order));
+}
+
+template <typename T1, typename T2>
+TL_DEVICE void PPUSystemAtomicAdd(T1 *address, T2 val, int memory_order) {
+  using NT1 = typename normalize_atomic_type<T1>::type;
+  static_assert(std::is_same_v<NT1, int> || std::is_same_v<NT1, unsigned int>,
+                "PPU system-scope atomic add supports int32 and uint32 only");
+  if constexpr (std::is_same_v<NT1, int>) {
+    int previous;
+    if (memory_order == int(hggc::memory_order_relaxed)) {
+      __ppu_atomic_fetch_add_relaxed_i32_system(
+          reinterpret_cast<volatile int *>(address), previous,
+          static_cast<int>(val));
+    } else if (memory_order == int(hggc::memory_order_consume) ||
+               memory_order == int(hggc::memory_order_acquire)) {
+      __ppu_atomic_fetch_add_acquire_i32_system(
+          reinterpret_cast<volatile int *>(address), previous,
+          static_cast<int>(val));
+    } else if (memory_order == int(hggc::memory_order_release)) {
+      __ppu_atomic_fetch_add_release_i32_system(
+          reinterpret_cast<volatile int *>(address), previous,
+          static_cast<int>(val));
+    } else if (memory_order == int(hggc::memory_order_acq_rel)) {
+      __ppu_atomic_fetch_add_acq_rel_i32_system(
+          reinterpret_cast<volatile int *>(address), previous,
+          static_cast<int>(val));
+    } else if (memory_order == int(hggc::memory_order_seq_cst)) {
+      __ppu_fence_sc_system();
+      __ppu_atomic_fetch_add_acquire_i32_system(
+          reinterpret_cast<volatile int *>(address), previous,
+          static_cast<int>(val));
+    } else {
+      TL_NOT_IMPLEMENTED();
+    }
+  } else {
+    unsigned int previous;
+    if (memory_order == int(hggc::memory_order_relaxed)) {
+      __ppu_atomic_fetch_add_relaxed_u32_system(
+          reinterpret_cast<volatile unsigned int *>(address), previous,
+          static_cast<unsigned int>(val));
+    } else if (memory_order == int(hggc::memory_order_consume) ||
+               memory_order == int(hggc::memory_order_acquire)) {
+      __ppu_atomic_fetch_add_acquire_u32_system(
+          reinterpret_cast<volatile unsigned int *>(address), previous,
+          static_cast<unsigned int>(val));
+    } else if (memory_order == int(hggc::memory_order_release)) {
+      __ppu_atomic_fetch_add_release_u32_system(
+          reinterpret_cast<volatile unsigned int *>(address), previous,
+          static_cast<unsigned int>(val));
+    } else if (memory_order == int(hggc::memory_order_acq_rel)) {
+      __ppu_atomic_fetch_add_acq_rel_u32_system(
+          reinterpret_cast<volatile unsigned int *>(address), previous,
+          static_cast<unsigned int>(val));
+    } else if (memory_order == int(hggc::memory_order_seq_cst)) {
+      __ppu_fence_sc_system();
+      __ppu_atomic_fetch_add_acquire_u32_system(
+          reinterpret_cast<volatile unsigned int *>(address), previous,
+          static_cast<unsigned int>(val));
+    } else {
+      TL_NOT_IMPLEMENTED();
+    }
+  }
+}
+
+template <typename T>
+TL_DEVICE T PPUSystemAtomicLoad(T *ref, int memory_order) {
+  using NT = typename normalize_atomic_type<T>::type;
+  static_assert(std::is_same_v<NT, int> || std::is_same_v<NT, unsigned int>,
+                "PPU system-scope atomic load supports int32 and uint32 only");
+  if constexpr (std::is_same_v<NT, int>) {
+    int value;
+    if (memory_order == int(hggc::memory_order_relaxed)) {
+      __ppu_atomic_load_relaxed_i32_system(
+          reinterpret_cast<const volatile int *>(ref), value);
+      return value;
+    }
+    if (memory_order == int(hggc::memory_order_consume) ||
+        memory_order == int(hggc::memory_order_acquire)) {
+      __ppu_atomic_load_acquire_i32_system(
+          reinterpret_cast<const volatile int *>(ref), value);
+      return value;
+    }
+    if (memory_order == int(hggc::memory_order_seq_cst)) {
+      __ppu_fence_sc_system();
+      __ppu_atomic_load_acquire_i32_system(
+          reinterpret_cast<const volatile int *>(ref), value);
+      return value;
+    }
+  } else {
+    unsigned int value;
+    if (memory_order == int(hggc::memory_order_relaxed)) {
+      __ppu_atomic_load_relaxed_u32_system(
+          reinterpret_cast<const volatile unsigned int *>(ref), value);
+      return value;
+    }
+    if (memory_order == int(hggc::memory_order_consume) ||
+        memory_order == int(hggc::memory_order_acquire)) {
+      __ppu_atomic_load_acquire_u32_system(
+          reinterpret_cast<const volatile unsigned int *>(ref), value);
+      return value;
+    }
+    if (memory_order == int(hggc::memory_order_seq_cst)) {
+      __ppu_fence_sc_system();
+      __ppu_atomic_load_acquire_u32_system(
+          reinterpret_cast<const volatile unsigned int *>(ref), value);
+      return value;
+    }
+  }
+  TL_NOT_IMPLEMENTED();
+  return T{};
+}
+
+template <typename T1, typename T2>
+TL_DEVICE void PPUSystemAtomicStore(T1 *ref, T2 value, int memory_order) {
+  using NT1 = typename normalize_atomic_type<T1>::type;
+  static_assert(std::is_same_v<NT1, int> || std::is_same_v<NT1, unsigned int>,
+                "PPU system-scope atomic store supports int32 and uint32 only");
+  if constexpr (std::is_same_v<NT1, int>) {
+    if (memory_order == int(hggc::memory_order_relaxed)) {
+      __ppu_atomic_store_relaxed_i32_system(
+          reinterpret_cast<volatile int *>(ref), static_cast<int>(value));
+      return;
+    }
+    if (memory_order == int(hggc::memory_order_release)) {
+      __ppu_atomic_store_release_i32_system(
+          reinterpret_cast<volatile int *>(ref), static_cast<int>(value));
+      return;
+    }
+    if (memory_order == int(hggc::memory_order_seq_cst)) {
+      __ppu_fence_sc_system();
+      __ppu_atomic_store_relaxed_i32_system(
+          reinterpret_cast<volatile int *>(ref), static_cast<int>(value));
+      return;
+    }
+  } else if constexpr (std::is_same_v<NT1, unsigned int>) {
+    if (memory_order == int(hggc::memory_order_relaxed)) {
+      __ppu_atomic_store_relaxed_u32_system(
+          reinterpret_cast<volatile unsigned int *>(ref),
+          static_cast<unsigned int>(value));
+      return;
+    }
+    if (memory_order == int(hggc::memory_order_release)) {
+      __ppu_atomic_store_release_u32_system(
+          reinterpret_cast<volatile unsigned int *>(ref),
+          static_cast<unsigned int>(value));
+      return;
+    }
+    if (memory_order == int(hggc::memory_order_seq_cst)) {
+      __ppu_fence_sc_system();
+      __ppu_atomic_store_relaxed_u32_system(
+          reinterpret_cast<volatile unsigned int *>(ref),
+          static_cast<unsigned int>(value));
+      return;
+    }
+  }
+  TL_NOT_IMPLEMENTED();
 }
 
 template <typename T1, typename T2>

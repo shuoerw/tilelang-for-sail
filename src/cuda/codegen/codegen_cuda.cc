@@ -2317,6 +2317,8 @@ void CodeGenTileLangCUDA::PrintVecStore(const BufferNode *buffer, DataType t,
  *            member stream instead).
  */
 void CodeGenTileLangCUDA::VisitExpr_(const CallNode *op, std::ostream &os) {
+  ICHECK(tl::GetAtomicScope(op) == "device")
+      << "Non-device-scope atomics are not implemented by the CUDA backend";
   auto print_extern_call_stmt = [&](std::string name, size_t start = 0,
                                     size_t end = 0) {
     // Cache context into a private ss, otherwise the let node may generate
