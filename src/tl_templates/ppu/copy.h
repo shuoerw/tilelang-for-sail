@@ -283,21 +283,35 @@ TL_DEVICE void store_global_128_conditional(void *ptr, uint4 value, bool pred) {
   global_store<uint4, 16>(ptr, value, pred);
 }
 
+template <bool Swizzled = true>
 TL_DEVICE void aiu_load(void const *smem_ptr, void const *global_ptr,
                         uint32_t dim_c, uint32_t dim_w, uint32_t cube_c,
-                        uint32_t cube_w, uint32_t stride_w_bytes,
+                        uint32_t cube_w, uint64_t stride_w_bytes,
                         int32_t start_c, int32_t start_w, uint32_t swzl_mode) {
-  uint32_t smem_int_ptr = smem_ptr_to_uint(smem_ptr);
-  asm volatile("ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.swzl.b8"
-               " [%0], [%1], "
-               "{%2, %3, %4}, "
-               "{%5, %6, %7}, "
-               "{%8, %9}, "
-               "{%10, %11, %12}, %13;" ::"r"(smem_int_ptr),
-               "l"((void const *)(global_ptr)), "r"(dim_c), "r"(dim_w), "r"(1),
-               "r"(cube_c), "r"(cube_w), "r"(1), "r"(dim_c),
-               "r"(stride_w_bytes * dim_w), "r"(start_c), "r"(start_w), "r"(0),
-               "r"(swzl_mode));
+  uint32_t smem_addr = smem_ptr_to_uint(smem_ptr);
+  uint64_t stride_n_bytes = stride_w_bytes * dim_w;
+
+  if constexpr (Swizzled) {
+    asm volatile(
+        "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.LLC::128B.padz."
+        "swzl.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+        "{%10, %11, %12}, %13;\n"
+        :
+        : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+          "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+          "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+          "r"(swzl_mode));
+  } else {
+    asm volatile(
+        "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.padz.linear.b8 "
+        "[%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+        "{%10, %11, %12}, %13;\n"
+        :
+        : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+          "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+          "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+          "r"(swzl_mode));
+  }
 }
 
 } // namespace tl
