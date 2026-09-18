@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "../../op/builtin.h"
+#include "ppu/op/copy.h"
 
 namespace tvm {
 namespace tl {
@@ -46,7 +47,7 @@ bool ContainsAIULoad(const Stmt &stmt) {
   bool found = false;
   PostOrderVisit(stmt, [&](const ObjectRef &node) {
     if (auto *call = node.as<CallNode>()) {
-      if (call->op.same_as(tl::ppu_aiu_load())) {
+      if (ppu::IsCompilerSyncAiuLoad(call)) {
         found = true;
       }
     }
@@ -249,7 +250,7 @@ private:
       if (found)
         return;
       if (auto *call = node.as<CallNode>()) {
-        if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
+        if (ppu::IsCompilerSyncAiuLoad(call) && call->args.size() > 0) {
           if (auto *access_call = call->args[0].as<CallNode>()) {
             if (access_call->op.same_as(builtin::tvm_access_ptr()) &&
                 access_call->args.size() > 1) {
@@ -273,7 +274,7 @@ private:
     int count = 0;
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
       if (auto *call = node.as<CallNode>()) {
-        if (call->op.same_as(tl::ppu_aiu_load())) {
+        if (ppu::IsCompilerSyncAiuLoad(call)) {
           ++count;
         }
       }
@@ -292,7 +293,7 @@ private:
                            std::vector<PendingGroup> *groups) {
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
       if (auto *call = node.as<CallNode>()) {
-        if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
+        if (ppu::IsCompilerSyncAiuLoad(call) && call->args.size() > 0) {
           PendingGroup group;
           PrimExpr dst = call->args[0];
           // dst should be tvm_access_ptr(type, buffer_data, offset, extent,

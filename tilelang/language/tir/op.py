@@ -2053,10 +2053,14 @@ def ppu_aiu_load(
     start_c,
     start_w,
     swzl_mode,
+    is_swizzle=1,
 ):
     """TIX AIU Load operation.
 
-    Directly invokes the backend ppu_aiu_load with 10 parameters.
+    Issue a warp-level asynchronous load. The caller selects the issuing warp
+    and manages commit/wait operations. Out-of-bounds coordinates are zero-filled.
+    The shared destination must be 128-byte aligned. ``cube_c``, ``cube_w``,
+    ``swzl_mode``, and ``is_swizzle`` must be compile-time constants.
 
     Parameters
     ----------
@@ -2069,7 +2073,7 @@ def ppu_aiu_load(
     dim_w : int | PrimExpr
         W dimension size (rows).
     cube_c : int
-        Copy block C size (bytes).
+        Copy block C size (bytes), at most 128. Swizzled loads require 64 or 128.
     cube_w : int
         Copy block W size (rows).
     stride_w_bytes : int | PrimExpr
@@ -2080,6 +2084,8 @@ def ppu_aiu_load(
         Start coordinate on W axis (rows).
     swzl_mode : int
         Swizzle mode (0=128B, 1=64B).
+    is_swizzle : bool | int
+        Use a swizzled destination (default 1); set to 0 for a linear destination.
     """
 
     return tvm.tirx.call_intrin(
@@ -2095,6 +2101,8 @@ def ppu_aiu_load(
         start_c,
         start_w,
         swzl_mode,
+        is_swizzle,
+        annotations={"no_implicit_async_commit_wait": const(1, "int32")},
     )
 
 
