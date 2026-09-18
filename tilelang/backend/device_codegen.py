@@ -10,6 +10,7 @@ from tvm import IRModule
 from tvm.target import Target
 
 from tilelang import tvm
+from tilelang.backend.atomic import validate_atomic_scopes
 
 DeviceCodegenFunc = Callable[[IRModule, Target], IRModule]
 TargetPredicate = Callable[[Target], bool]
@@ -37,6 +38,7 @@ class DeviceCodegen:
         return True if self.supports_target is None else self.supports_target(target)
 
     def lower(self, mod: IRModule, target: Target, *, compile_device: bool) -> IRModule:
+        validate_atomic_scopes(mod, target)
         build_func = self.build if compile_device else self.build_without_compile
         if build_func is None:
             mode = "with compilation" if compile_device else "without compilation"

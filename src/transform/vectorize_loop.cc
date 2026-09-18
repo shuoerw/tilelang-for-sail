@@ -780,6 +780,13 @@ public:
 
   // Call
   PrimExpr VisitExpr_(const CallNode *op) final {
+    // Non-device-scope atomics are scalar operations. Preserve every
+    // iteration's pointer, memory order and scope instead of packing or
+    // hoisting the call.
+    if (GetAtomicScope(op) != "device") {
+      need_scalarize_ = true;
+      return GetRef<PrimExpr>(op);
+    }
     if (op->op.same_as(builtin::if_then_else())) {
       return MutateIfThenElseExpr_(op);
     } else if (op->op.same_as(builtin::texture2d_load())) {

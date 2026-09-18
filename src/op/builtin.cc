@@ -603,12 +603,12 @@ TIR_DEFINE_TL_BUILTIN(increase_descriptor_offset)
                                Integer(CallEffectKind::kOpaque));
 
 TIR_DEFINE_TL_BUILTIN(atomic_add_elem_op)
-    .set_num_inputs(3)
+    .set_num_inputs(-1)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 
 TIR_DEFINE_TL_BUILTIN(atomic_add_ret_elem_op)
-    .set_num_inputs(3)
+    .set_num_inputs(-1)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 
@@ -623,14 +623,34 @@ TIR_DEFINE_TL_BUILTIN(atomic_addx4_elem_op)
                                Integer(CallEffectKind::kOpaque));
 
 TIR_DEFINE_TL_BUILTIN(atomic_load_elem_op)
-    .set_num_inputs(2)
+    .set_num_inputs(-1)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 
 TIR_DEFINE_TL_BUILTIN(atomic_store_elem_op)
-    .set_num_inputs(3)
+    .set_num_inputs(-1)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
+
+std::string GetAtomicScope(const CallNode *call) {
+  const bool is_load = call->op.same_as(atomic_load_elem_op());
+  if (!is_load && !call->op.same_as(atomic_add_elem_op()) &&
+      !call->op.same_as(atomic_add_ret_elem_op()) &&
+      !call->op.same_as(atomic_store_elem_op())) {
+    return "device";
+  }
+  const size_t scope_index = is_load ? 2 : 3;
+  if (call->args.size() <= scope_index) {
+    return "device";
+  }
+  ICHECK_EQ(call->args.size(), scope_index + 1);
+  const auto *scope = call->args[scope_index].as<StringImmNode>();
+  ICHECK(scope && (scope->value == "block" || scope->value == "device" ||
+                   scope->value == "system"))
+      << call->op
+      << " scope must be a constant string: block, device or system";
+  return scope->value;
+}
 
 TIR_DEFINE_TL_BUILTIN(atomic_or_elem_op)
     .set_num_inputs(3)

@@ -1100,6 +1100,8 @@ TVM_DLL const Op &increase_descriptor_offset();
  *
  *  This op is used to represent an element-wise atomic add operation in
  * tilelang.
+ * Arguments: (dst, value[, memory_order[, scope]]). Scope is "device" by
+ * default, or "block" or "system".
  */
 TVM_DLL const Op &atomic_add_elem_op();
 
@@ -1108,6 +1110,8 @@ TVM_DLL const Op &atomic_add_elem_op();
  *
  *  This op is used to represent an element-wise atomic add operation in
  * tilelang that returns the previous value.
+ * Arguments: (dst, value[, memory_order[, scope]]). Scope is "device" by
+ * default, or "block".
  */
 TVM_DLL const Op &atomic_add_ret_elem_op();
 
@@ -1131,6 +1135,7 @@ TVM_DLL const Op &atomic_addx4_elem_op();
  * \brief tilelang intrinsic for atomic load.
  *
  *  This op is used to represent an atomic load operation in tilelang.
+ * Arguments: (src, memory_order[, scope]). Scope defaults to "device".
  */
 TVM_DLL const Op &atomic_load_elem_op();
 
@@ -1138,8 +1143,12 @@ TVM_DLL const Op &atomic_load_elem_op();
  * \brief tilelang intrinsic for atomic store.
  *
  *  This op is used to represent an atomic store operation in tilelang.
+ * Arguments: (dst, value, memory_order[, scope]). Scope defaults to "device".
  */
 TVM_DLL const Op &atomic_store_elem_op();
+
+/*! \brief Atomic add/load/store scope; defaults to device for other calls. */
+std::string GetAtomicScope(const tirx::CallNode *call);
 
 /*!
  * \brief tilelang intrinsic for element-wise atomic bitwise-or.

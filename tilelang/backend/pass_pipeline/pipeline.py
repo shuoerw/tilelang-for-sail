@@ -5,6 +5,8 @@ from collections.abc import Callable
 from tvm import IRModule
 from tvm.target import Target
 
+from tilelang.backend.atomic import validate_atomic_scopes
+
 LowerFunc = Callable[[IRModule, Target], IRModule]
 
 
@@ -20,6 +22,7 @@ class PassPipeline:
         self._lower = lower
 
     def lower(self, mod: IRModule, target: Target) -> IRModule:
+        validate_atomic_scopes(mod, target)
         return self._lower(mod, target)
 
 
