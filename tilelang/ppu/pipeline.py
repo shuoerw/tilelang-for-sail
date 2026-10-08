@@ -201,8 +201,7 @@ def PPUPassPipelineBody(mod: IRModule, target: Target) -> IRModule:
     mod = tilelang.transform.MergeIfStmt()(mod)
 
     # @PPU-specific
-    # Wrap thread-index address operands for PPU swizzled ldmatrix after
-    # LowerTileOp has materialized the low-level intrinsic calls.
+    # Rewrite warp-aligned if-guards into scalar PPU uniform branches.
     mod = tilelang.ppu.transform.InjectPpuUniform()(mod)
 
     mod = tilelang.transform.MakePackedAPI()(mod)
