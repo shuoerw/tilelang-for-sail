@@ -34,7 +34,7 @@ def _dequant_mxfp4(values: torch.Tensor, scales: torch.Tensor) -> torch.Tensor:
         PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,
     }
 )
-def matmul_scaled(A, B, A_scale, B_scale, block_M, block_N, block_K, num_stages):
+def matmul_scaled(A, B, A_scale, B_scale, block_M, block_N, block_K, num_stages, pipeline=False):
     M, N, K = T.const("M, N, K")
 
     A: T.Tensor((M, K), T.float4_e2m1fn)
@@ -74,6 +74,7 @@ def matmul_scaled(A, B, A_scale, B_scale, block_M, block_N, block_K, num_stages)
                 T.bool(True),
                 scale_A=A_scale_shared,
                 scale_B=B_scale_shared,
+                pipeline=pipeline,
             )
 
         T.copy(C_local, C[by * block_M, bx * block_N])
@@ -108,7 +109,7 @@ def make_scale_cases(rows_a: int, rows_b: int, k_tiles: int):
     return (("scale_one", one_a, one_b), ("distinct_halves", distinct_a, distinct_b), ("random", random_a, random_b))
 
 
-def check_kernel_source(num_stages, block_K=64):
+def check_kernel_source(num_stages, block_K=64, pipeline=False):
     """Compile and verify the generated kernel source contains scaled-MMA intrinsics."""
     M = N = 128
     K = block_K
@@ -120,11 +121,15 @@ def check_kernel_source(num_stages, block_K=64):
         block_N=128,
         block_K=block_K,
         num_stages=num_stages,
+        pipeline=pipeline,
     )
     source = kernel.get_kernel_source()
     assert "#include <tl_templates/ppu/instruction/mma.h>" in source
     assert "tl::mma_sync_scaled<" in source
     assert "tl::tix_ldmatrix_x1_trans(" in source
+    uses_register_slots = pipeline and block_K > 64
+    for name in ("A_local_0", "A_local_1", "B_local_0", "B_local_1", "SFA_local_0", "SFA_local_1", "SFB_local_0", "SFB_local_1"):
+        assert (name in source) == uses_register_slots
     actlize_header = Path(ACTLIZE_INCLUDE_DIR) / "cute/arch/mma_ppu0015.hpp"
     assert actlize_header.exists(), f"actlize header not found: {actlize_header}"
     assert _NATIVE_FP4_MMA in actlize_header.read_text(encoding="utf-8")
@@ -132,7 +137,9 @@ def check_kernel_source(num_stages, block_K=64):
     print(source, flush=True)
 
 
-def run_scaled_case(num_stages, scale_name, a_scale, b_scale, a_packed, b_packed, M, N, K, block_K=64, block_M=128, block_N=128):
+def run_scaled_case(
+    num_stages, scale_name, a_scale, b_scale, a_packed, b_packed, M, N, K, block_K=64, block_M=128, block_N=128, pipeline=False
+):
     """Run a single (num_stages, scale) MXFP4 scaled-GEMM case."""
     device = torch.device("cuda")
     kernel = matmul_scaled.compile(
@@ -143,6 +150,7 @@ def run_scaled_case(num_stages, scale_name, a_scale, b_scale, a_packed, b_packed
         block_N=block_N,
         block_K=block_K,
         num_stages=num_stages,
+        pipeline=pipeline,
     )
     result = kernel(a_packed, b_packed, a_scale.to(device), b_scale.to(device))
     ref_a = _dequant_mxfp4(a_packed.cpu(), a_scale)

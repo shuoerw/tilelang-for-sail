@@ -47,6 +47,11 @@ def InjectPpuUniform():
     return _ffi_api.InjectPpuUniform()  # type: ignore
 
 
+def RegisterPingPongPipeline():
+    """Rewrite annotated inner GEMM loops into 2-slot register pipelines."""
+    return _ffi_api.RegisterPingPongPipeline()  # type: ignore
+
+
 def InjectAIUSyncBarrier():
     """Inject commit/wait sync barriers for AIU loads in stage=0 loops."""
     # PPU: call the independently registered PPU transform implementation.
@@ -85,6 +90,7 @@ def PersistThreadblock():
 __all__ = [
     "LowerThreadAllreduce",
     "LowerL2Persistent",
+    "RegisterPingPongPipeline",
     "LowerL2PersistentCache",
     "LowerLDGSTG",
     "PackSubwordWarpShuffle",
