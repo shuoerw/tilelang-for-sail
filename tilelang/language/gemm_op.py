@@ -33,6 +33,7 @@ def _gemm_impl(
     mbar: BarrierType | None = None,
     scale_A: BufferLikeType | None = None,
     scale_B: BufferLikeType | None = None,
+    pipeline: bool = False,
     annotations: dict | None = None,
 ) -> tirx.PrimExpr:
     """Shared GEMM implementation.
@@ -175,6 +176,10 @@ def _gemm_impl(
             ]
         )
 
+    if pipeline:
+        annotations = dict(annotations or {})
+        annotations["register_pipeline"] = 1
+
     return tirx.call_intrin(
         "handle",
         tirx.op.Op.get(op_key),
@@ -196,6 +201,7 @@ def gemm(
     *,
     scale_A: BufferLikeType | None = None,
     scale_B: BufferLikeType | None = None,
+    pipeline: bool = False,
 ) -> tirx.PrimExpr:
     """TileLang GEMM operator.
 
@@ -228,6 +234,8 @@ def gemm(
             backends may ignore it and must not pass it to ``T.gemm``.
         scale_B: Optional packed E8M0 scale pairs for PPU MXFP4 B, with the
             corresponding ``[K/64, N]`` layout for a multi-atom K tile.
+        pipeline (bool): Enable the PPU two-slot register ping-pong pipeline.
+            Defaults to False.
 
     Returns:
         tirx.Call: A handle to the GEMM operation.
@@ -246,6 +254,7 @@ def gemm(
         mbar,
         scale_A,
         scale_B,
+        pipeline,
     )
 
 

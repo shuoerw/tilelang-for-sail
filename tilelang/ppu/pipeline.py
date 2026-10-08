@@ -83,6 +83,11 @@ def PPUPassPipelineBodyPrologue(mod: IRModule, target: Target) -> IRModule:
     # Lower high-level tile operations to low-level operations
     mod = tilelang.ppu.transform.LowerTileOp()(mod)
 
+    # Register ping-pong pipeline: rewrite annotated inner ki loops into
+    # 2-slot ping-pong unrolled form. This must run after LowerTileOp so the
+    # pass can match the concrete ldmatrix and MMA calls.
+    mod = tilelang.ppu.transform.RegisterPingPongPipeline()(mod)
+
     # @PPU specific
     # Lower l2 persistent map
     mod = tilelang.ppu.transform.LowerL2Persistent()(mod)

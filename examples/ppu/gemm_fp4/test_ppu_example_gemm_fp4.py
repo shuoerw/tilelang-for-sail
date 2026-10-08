@@ -99,6 +99,15 @@ def test_mxfp4_scaled_gemm_kernel_source(num_stages, block_K):
     ppu_example_mxfp4_scaled_gemm.check_kernel_source(num_stages, block_K)
 
 
+@pytest.mark.parametrize("num_stages", [0, 2])
+@pytest.mark.parametrize("block_K", [64, 128, 192])
+@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
+def test_mxfp4_scaled_gemm_pipeline_kernel_source(num_stages, block_K):
+    """Register ping-pong also covers the ldmatrix-loaded scale packs."""
+    ppu_example_mxfp4_scaled_gemm.check_kernel_source(num_stages, block_K, pipeline=True)
+
+
 # ---------------------------------------------------------------------------
 # MXFP4 scaled GEMM – functional correctness (2 stages x 3 K tiles x 3 scale cases = 18)
 # ---------------------------------------------------------------------------
@@ -145,6 +154,31 @@ def test_mxfp4_scaled_gemm(num_stages, block_K, scale_name, mxfp4_inputs):
         N,
         K,
         block_K,
+    )
+
+
+@pytest.mark.parametrize("num_stages", [0, 2])
+@pytest.mark.parametrize("block_K", [64, 128, 192])
+@pytest.mark.parametrize("scale_name", ["distinct_halves", "random"])
+@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
+def test_mxfp4_scaled_gemm_pipeline(num_stages, block_K, scale_name, mxfp4_inputs):
+    """Check scale-slot reuse across one, two, and three inner K iterations."""
+    a_packed, b_packed, M, N, K = mxfp4_inputs[block_K]
+    scale_cases = {name: (a_scale, b_scale) for name, a_scale, b_scale in ppu_example_mxfp4_scaled_gemm.make_scale_cases(M, N, K // 64)}
+    a_scale, b_scale = scale_cases[scale_name]
+    ppu_example_mxfp4_scaled_gemm.run_scaled_case(
+        num_stages,
+        scale_name,
+        a_scale,
+        b_scale,
+        a_packed,
+        b_packed,
+        M,
+        N,
+        K,
+        block_K,
+        pipeline=True,
     )
 
 

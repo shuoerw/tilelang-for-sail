@@ -50,6 +50,7 @@ def matmul(
     num_stages,
     threads,
     b_in_dtype=None,
+    pipeline=False,
 ):
     if b_in_dtype is None:
         b_in_dtype = in_dtype
@@ -78,7 +79,7 @@ def matmul(
                     T.copy(B[bx * block_N, k * block_K], B_shared)
                 else:
                     T.copy(B[k * block_K, bx * block_N], B_shared)
-                T.gemm(A_shared, B_shared, C_local, trans_A, trans_B)
+                T.gemm(A_shared, B_shared, C_local, trans_A, trans_B, pipeline=pipeline)
             T.copy(C_local, C[by * block_M, bx * block_N])
 
     return main
