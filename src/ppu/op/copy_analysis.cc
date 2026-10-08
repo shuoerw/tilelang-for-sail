@@ -17,6 +17,9 @@
 #include <sstream>
 #include <utility>
 
+#include <algorithm>
+#include <climits>
+
 namespace tvm {
 namespace tl {
 namespace ppu {
@@ -162,6 +165,49 @@ const char *CopyInstToString(CopyInst inst) {
 
 bool CopyInstIsCPAsync(CopyInst inst) { return inst == CopyInst::kCPAsync; }
 
+std::optional<AIUWarpPartition>
+FindAIUWarpPartition(bool swizzled, int swizzle_bytes, int64_t height,
+                     int64_t width_bytes, int num_warps) {
+  if (num_warps < 1) {
+    return std::nullopt;
+  }
+  int64_t num_blocks = swizzled ? width_bytes / swizzle_bytes : 1;
+  if (num_warps == 1) {
+    if (swizzled && height % 8 != 0) {
+      return std::nullopt;
+    }
+    return AIUWarpPartition{1, 1, static_cast<int>(num_blocks),
+                            static_cast<int>(height)};
+  }
+  const int max_col_splits =
+      static_cast<int>(std::min<int64_t>(num_warps, num_blocks));
+  for (int col_splits = max_col_splits; col_splits >= 1; --col_splits) {
+    if (swizzled && num_blocks % col_splits != 0) {
+      continue;
+    }
+    if (!swizzled && col_splits != 1) {
+      continue;
+    }
+    const int max_row_splits =
+        std::min(num_warps / col_splits,
+                 static_cast<int>(std::min<int64_t>(height, INT_MAX)));
+    for (int row_splits = max_row_splits; row_splits >= 1; --row_splits) {
+      if (height % row_splits != 0) {
+        continue;
+      }
+      int rows_per_warp = static_cast<int>(height / row_splits);
+      if (swizzled && rows_per_warp % 8 != 0) {
+        continue;
+      }
+      int blocks_per_warp =
+          swizzled ? static_cast<int>(num_blocks / col_splits) : 1;
+      return AIUWarpPartition{row_splits, col_splits, blocks_per_warp,
+                              rows_per_warp};
+    }
+  }
+  return std::nullopt;
+}
+
 namespace {
 
 struct CopyFacts {
@@ -293,11 +339,14 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
     return Unsupported(tma_reason);
   }
 
-  if (facts.explicit_cp_async || facts.no_implicit_async_commit_wait) {
-    // When only pipeline-marked (no_implicit_async_commit_wait) but not
-    // explicitly requested cp_async, AIU should take priority.
-    if (!facts.explicit_cp_async && !facts.pass_context_disables_aiu &&
-        facts.can_aiu_load) {
+  if (facts.explicit_cp_async) {
+    return facts.can_cp_async ? Supported(CopyInst::kCPAsync)
+                              : Unsupported(facts.async_unavailable_reason);
+  }
+
+  if (facts.no_implicit_async_commit_wait) {
+    if (facts.prefer_instruction == PreferredCopyInstruction::kAIU &&
+        !facts.pass_context_disables_aiu && facts.can_aiu_load) {
       return Supported(CopyInst::kAiuLoad);
     }
     return facts.can_cp_async ? Supported(CopyInst::kCPAsync)
@@ -325,23 +374,17 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
 
   if (facts.prefer_instruction == PreferredCopyInstruction::kAIU) {
     if (facts.pass_context_disables_aiu) {
-      return Unsupported("T.copy prefer_instruction=\"aiu\" conflicts with "
-                         "pass config tl.disable_aiu_lower=true.");
+      return Supported(SelectSyncLikeInst(facts));
     }
-    return facts.can_aiu_load
-               ? Supported(CopyInst::kAiuLoad)
-               : Unsupported(
-                     "T.copy prefer_instruction=\"aiu\" requires a PPU "
-                     "AIU-capable fp16/bf16/float8_e4m3fn/float8_e5m2/"
-                     "float4_e2m1fn global->shared copy with matching dtype.");
+    if (facts.can_aiu_load)
+      return Supported(CopyInst::kAiuLoad);
+    if (facts.can_cp_async)
+      return Supported(CopyInst::kCPAsync);
+    return Supported(SelectSyncLikeInst(facts));
   }
 
   if (facts.prefer_instruction == PreferredCopyInstruction::kSync) {
     return Supported(SelectSyncLikeInst(facts));
-  }
-
-  if (!facts.pass_context_disables_aiu && facts.can_aiu_load) {
-    return Supported(CopyInst::kAiuLoad);
   }
 
   return Supported(SelectSyncLikeInst(facts));
