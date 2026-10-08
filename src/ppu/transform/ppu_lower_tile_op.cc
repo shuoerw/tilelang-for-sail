@@ -906,11 +906,12 @@ private:
       return call;
     }
 
-    if (op->op.same_as(tl::ptx_ldmatrix())) {
+    if (op->op.same_as(tl::ptx_ldmatrix()) ||
+        op->op.same_as(tl::tix_ldmatrix_b8())) {
       is_ptx_ = true;
       auto call = Downcast<Call>(IRMutatorWithAnalyzer::VisitExpr_(op));
       is_ptx_ = false;
-      // form: T.ptx_ldmatrix(..., smem_ptr, smem_offset)
+      // form: T.ptx_ldmatrix / T.tix_ldmatrix_b8 (..., smem_ptr, smem_offset)
       // smem_ptr: T.tvm_access_ptr(ptype, data, offset, extent, rw_mask)
       // or T.address_of(buffer, offset)
       PrimExpr access_ptr = call->args[2];

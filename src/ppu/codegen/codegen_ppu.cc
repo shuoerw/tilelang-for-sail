@@ -2396,6 +2396,17 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
       }
     }
     print_extern_call_stmt(func_name, 2);
+  } else if (op->op.same_as(tl::tix_ldmatrix_b8())) {
+    // (matrix_type, num, shared_addr, local_addr); matrix_type becomes the
+    // trailing trans_block flag of tix_ldmatrix_x{1,2}_trans_m16n16_b8.
+    int matrix_type = Downcast<IntImm>(op->args[0])->value;
+    int num = Downcast<IntImm>(op->args[1])->value;
+    std::string func_name =
+        "tl::tix_ldmatrix_x" + std::to_string(num) + "_trans_m16n16_b8";
+    this->PrintIndent();
+    this->stream << func_name << "(" << PrintExpr(op->args[2]) << ", "
+                 << PrintExpr(op->args[3]) << ", "
+                 << (matrix_type ? "true" : "false") << ");\n";
   } else if (op->op.same_as(tl::tix_ldmatrix_swzl())) {
     int trans = Downcast<IntImm>(op->args[0])->value;
     int num = Downcast<IntImm>(op->args[1])->value;

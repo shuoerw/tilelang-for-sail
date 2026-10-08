@@ -21,6 +21,32 @@ namespace tl {
 using namespace ffi;
 using namespace tirx;
 
+Fragment MakeGemmFragment8x16PPU() {
+  IterVar i = MakeIterVar("i", 8);
+  IterVar j = MakeIterVar("j", 16);
+  IterVar rep = MakeIterVar("rep", 1);
+  PrimExpr forward_thread = FloorDiv(j->var, 4) + 4 * i;
+  PrimExpr index = FloorMod(j->var, 4);
+  return Fragment({i, j}, {index}, forward_thread, rep);
+}
+
+Fragment MakeGemmFragment8x32PPU(int dtype_bits) {
+  ICHECK_EQ(dtype_bits, 4);
+  constexpr int kRegisterBits = 32;
+  constexpr int kLdsmRowBits = 128;
+  constexpr int kFragmentRows = 8;
+  constexpr int kThreadColumnGroups = 4;
+  const int elements_per_register = kRegisterBits / dtype_bits;
+  const int row_elements = kLdsmRowBits / dtype_bits;
+  IterVar i = MakeIterVar("i", kFragmentRows);
+  IterVar j = MakeIterVar("j", row_elements);
+  IterVar rep = MakeIterVar("rep", 1);
+  PrimExpr forward_thread =
+      FloorDiv(j->var, elements_per_register) + kThreadColumnGroups * i;
+  PrimExpr index = FloorMod(j->var, elements_per_register);
+  return Fragment({i, j}, {index}, forward_thread, rep);
+}
+
 // ---------------------------------------------------------------------------
 // Local helpers (mirrored from gemm_layouts.cc for self-contained compilation)
 // ---------------------------------------------------------------------------
