@@ -1001,7 +1001,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         is not 89 (only arch 89 supports the swizzle variant).
         """
         pass_ctx = get_pass_context()
-        config_disabled = pass_ctx.config.get(PassConfigKey.TL_DISABLE_LDMAT_SWZL.value, True)
+        config_disabled = pass_ctx.config.get(PassConfigKey.TL_DISABLE_LDMAT_SWZL.value, False)
         return config_disabled or self.ppu_arch != 15
 
     def _ldmat_swzl_mode(self, stride, dtype: str) -> tuple[int, bool]:

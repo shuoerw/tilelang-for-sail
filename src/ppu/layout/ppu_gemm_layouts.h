@@ -12,6 +12,10 @@
 namespace tvm {
 namespace tl {
 
+// Register-fragment layouts used by PPU matrix loads.
+Fragment MakeGemmFragment8x16PPU();
+Fragment MakeGemmFragment8x32PPU(int dtype_bits);
+
 // PPU: padded/shared-memory layout variants for cutlass-ppu Actlize layouts.
 Layout MakeGemmBLayoutPaddedPPU(int stride, int continuous, int element_size,
                                 bool k_inner = true);

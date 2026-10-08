@@ -842,6 +842,11 @@ TIR_DEFINE_TL_BUILTIN(ppu_aiu_load)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 
+TIR_DEFINE_TL_BUILTIN(tix_ldmatrix_b8)
+    .set_num_inputs(4)
+    .set_attr<TCallEffectKind>("TCallEffectKind",
+                               Integer(CallEffectKind::kOpaque));
+
 TIR_DEFINE_TL_BUILTIN(tix_ldmatrix_swzl)
     .set_num_inputs(6)
     .set_attr<TCallEffectKind>("TCallEffectKind",
