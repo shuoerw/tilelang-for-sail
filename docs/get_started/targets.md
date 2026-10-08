@@ -149,6 +149,15 @@ GPU and set it in the target config or use the corresponding target tag—for ex
 Refer to NVIDIA’s [CUDA GPUs](https://developer.nvidia.com/cuda-gpus) page or the TVM source
 (`3rdparty/tvm/src/target/tag.cc`) for the latest mapping between devices and compute capabilities.
 
+FP4 AIU fallbacks currently require `cp.async` to handle every destination
+store. Layouts or regions that leave FP4 buffer stores produce an unsupported-case
+diagnostic instead of using nibble read-modify-write stores. Use a byte-aligned
+layout and copy region supported by AIU or `cp.async`, or copy explicitly packed
+`uint8` data. An explicit AIU preference also rejects FP4 copies with incompatible
+scopes or dtypes, or with AIU disabled.
+This restriction also applies to byte-aligned layouts when their fallback
+requires ordinary FP4 stores; byte alignment alone does not guarantee `cp.async`.
+
 ## Creating targets programmatically
 
 TileLang exposes the helper `tilelang.backend.target.determine_target` (returns a canonical target string or config
