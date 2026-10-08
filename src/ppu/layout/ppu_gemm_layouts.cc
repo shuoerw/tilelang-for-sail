@@ -9,8 +9,10 @@
 
 #include "ppu/layout/ppu_gemm_layouts.h"
 
+#include <tvm/ffi/extra/structural_equal.h>
 #include <tvm/tirx/op.h>
 
+#include "layout/cute_layout.h"
 #include "layout/layout.h"
 
 #include "support/check.h"
@@ -43,6 +45,20 @@ SwizzleShapeInfo GetSwizzleShapeInfoChecked(const Buffer &buffer) {
   ICHECK(stride && continuous)
       << "Swizzle layout requires constant last-2 dims";
   return SwizzleShapeInfo{*stride, *continuous, buffer->dtype.bits()};
+}
+
+bool TryGetSwizzleShapeInfo(const Buffer &buffer, SwizzleShapeInfo *info) {
+  if (!buffer.defined() || buffer->shape.size() < 2) {
+    return false;
+  }
+  size_t ndim = buffer->shape.size();
+  auto stride = as_const_int(buffer->shape[ndim - 2]);
+  auto continuous = as_const_int(buffer->shape[ndim - 1]);
+  if (!stride || !continuous) {
+    return false;
+  }
+  *info = SwizzleShapeInfo{*stride, *continuous, buffer->dtype.bits()};
+  return true;
 }
 
 } // namespace
@@ -308,6 +324,92 @@ Layout MakePPUSwizzledLayout(const Buffer &buffer, bool k_inner, bool allow_pad,
         static_cast<int>(info.continuous), info.element_size, k_inner);
   }
   return ExpandLayout2D(base, buffer);
+}
+
+AIUSharedLayoutClass ClassifySharedLayoutForAIU(const Layout &layout,
+                                                const Buffer &buffer) {
+  const int bits = static_cast<int>(buffer->dtype.bits());
+  if (bits <= 0 || (bits & (bits - 1)) != 0) {
+    return AIUSharedLayoutClass::kOther;
+  }
+  auto can_recast_bytes = [bits](const cute::ComposedLayout &value) {
+    if (bits >= 8)
+      return true;
+    const int factor = 8 / bits;
+    if (value->offset % factor != 0)
+      return false;
+    // An AIU byte copy cannot implement nibble permutations or row strides
+    // that cut through a byte. Recast rounds those strides up.
+    if (value->swizzle->IsSwizzled() &&
+        (int64_t(1) << value->swizzle->m_base) < factor)
+      return false;
+    auto shape = cute::Flatten(value->layout->shape);
+    auto stride = cute::Flatten(value->layout->stride);
+    for (int i = 0; i < cute::Rank(shape); ++i) {
+      if (!cute::IsConst(shape[i]) || !cute::IsConst(stride[i]))
+        return false;
+      const int64_t size = cute::AsConst(shape[i]);
+      const int64_t step = cute::AsConst(stride[i]);
+      if (size <= 1 || step == 0)
+        continue;
+      if (step == 1) {
+        if (size % factor != 0)
+          return false;
+      } else if (step % factor != 0) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto composed = cute::ComposedLayoutFromTileLang(layout);
+  if (!composed.defined() || !can_recast_bytes(composed.value())) {
+    return AIUSharedLayoutClass::kOther;
+  }
+  auto composed_bytes =
+      composed.value().Recast(static_cast<int>(buffer->dtype.bits()), 8);
+  const auto *sw = composed_bytes->swizzle.get();
+  if (!sw->IsSwizzled()) {
+    Layout linear_ref = MakeLinearLayout(buffer->shape);
+    auto ref = cute::ComposedLayoutFromTileLang(linear_ref);
+    if (!ref.defined() || !can_recast_bytes(ref.value())) {
+      return AIUSharedLayoutClass::kOther;
+    }
+    auto ref_bytes =
+        ref.value().Recast(static_cast<int>(buffer->dtype.bits()), 8);
+    if (!ref_bytes->swizzle->IsSwizzled() &&
+        composed_bytes->offset == ref_bytes->offset &&
+        StructuralEqual()(composed_bytes->layout, ref_bytes->layout)) {
+      return AIUSharedLayoutClass::kLinear;
+    }
+    return AIUSharedLayoutClass::kOther;
+  }
+  if (sw->m_base != 4 || sw->s_shift != 3 || sw->b_bits < 1 || sw->b_bits > 3) {
+    return AIUSharedLayoutClass::kOther;
+  }
+  SwizzleShapeInfo info;
+  if (!TryGetSwizzleShapeInfo(buffer, &info) ||
+      (info.stride != 4 && info.stride % 8 != 0) ||
+      info.continuous * info.element_size % (128 << sw->b_bits) != 0) {
+    return AIUSharedLayoutClass::kOther;
+  }
+  Layout canonical = sw->b_bits == 1   ? MakeQuarterBankSwizzleLayout(buffer)
+                     : sw->b_bits == 2 ? MakeHalfBankSwizzleLayout(buffer)
+                                       : MakeFullBankSwizzleLayout(buffer);
+  auto ref = cute::ComposedLayoutFromTileLang(canonical);
+  if (!ref.defined() || !can_recast_bytes(ref.value())) {
+    return AIUSharedLayoutClass::kOther;
+  }
+  auto ref_bytes =
+      ref.value().Recast(static_cast<int>(buffer->dtype.bits()), 8);
+  // AIU fixes both the XOR pattern and the arrangement of rows and column
+  // blocks. Matching the XOR pattern alone does not establish compatibility.
+  if (composed_bytes->offset != ref_bytes->offset ||
+      !StructuralEqual()(composed_bytes->layout, ref_bytes->layout)) {
+    return AIUSharedLayoutClass::kOther;
+  }
+  return sw->b_bits == 1   ? AIUSharedLayoutClass::kSwizzle32
+         : sw->b_bits == 2 ? AIUSharedLayoutClass::kSwizzle64
+                           : AIUSharedLayoutClass::kSwizzle128;
 }
 
 // ---------------------------------------------------------------------------

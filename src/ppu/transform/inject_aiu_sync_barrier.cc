@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "../../op/builtin.h"
+#include "ppu/attr.h"
 
 namespace tvm {
 namespace tl {
@@ -45,8 +46,8 @@ bool IsAsyncScope(const Stmt &stmt) {
 bool ContainsAIULoad(const Stmt &stmt) {
   bool found = false;
   PostOrderVisit(stmt, [&](const ObjectRef &node) {
-    if (auto *call = node.as<CallNode>()) {
-      if (call->op.same_as(tl::ppu_aiu_load())) {
+    if (auto *attr = node.as<AttrStmtNode>()) {
+      if (attr->attr_key == attr::kAIUSyncOpt) {
         found = true;
       }
     }
@@ -102,8 +103,8 @@ Stmt MakeWait(const Stmt &body, int wait_count) {
 }
 
 /*!
- * \brief A pending commit group, representing one aiu_load's dst buffer set.
- * Each aiu_load creates a separate commit group (FIFO order).
+ * \brief A pending commit group containing the destinations of one synchronous
+ * copy. A copy may emit several AIU loads that share a commit.
  */
 struct PendingGroup {
   std::unordered_set<const VarNode *> dst_vars;
@@ -240,6 +241,9 @@ private:
    */
   bool ContainsAIULoadForVars(const Stmt &stmt,
                               const std::vector<PendingGroup> &groups) const {
+    if (!ContainsAIULoad(stmt)) {
+      return false;
+    }
     std::unordered_set<const VarNode *> all_vars;
     for (const auto &g : groups) {
       all_vars.insert(g.dst_vars.begin(), g.dst_vars.end());
@@ -267,33 +271,24 @@ private:
   }
 
   /*!
-   * \brief Count the number of aiu_load calls in a statement.
+   * \brief Count the commit groups emitted by a marked synchronous copy.
    */
-  int CountAIULoads(const Stmt &stmt) {
-    int count = 0;
-    PostOrderVisit(stmt, [&](const ObjectRef &node) {
-      if (auto *call = node.as<CallNode>()) {
-        if (call->op.same_as(tl::ppu_aiu_load())) {
-          ++count;
-        }
-      }
-    });
-    return count;
-  }
+  int CountAIULoads(const Stmt &stmt) { return ContainsAIULoad(stmt) ? 1 : 0; }
 
   /*!
-   * \brief Collect per-aiu_load PendingGroups from a statement.
-   * Each aiu_load call creates a separate PendingGroup (since each has its
-   * own commit). Groups are appended in program order (PostOrderVisit).
-   * arg[0] is tvm_access_ptr(type, buffer_data_var, offset, extent, mask).
-   * We extract buffer_data_var (arg[1] of tvm_access_ptr).
+   * \brief Collect the destinations of a marked copy into one pending commit
+   * group. arg[0] is tvm_access_ptr(type, buffer_data_var, offset, extent,
+   * mask). We extract buffer_data_var (arg[1] of tvm_access_ptr).
    */
   void CollectAIUDstGroups(const Stmt &stmt,
                            std::vector<PendingGroup> *groups) {
+    if (!ContainsAIULoad(stmt)) {
+      return;
+    }
+    PendingGroup group;
     PostOrderVisit(stmt, [&](const ObjectRef &node) {
       if (auto *call = node.as<CallNode>()) {
         if (call->op.same_as(tl::ppu_aiu_load()) && call->args.size() > 0) {
-          PendingGroup group;
           PrimExpr dst = call->args[0];
           // dst should be tvm_access_ptr(type, buffer_data, offset, extent,
           // mask)
@@ -305,12 +300,12 @@ private:
               }
             }
           }
-          if (!group.dst_vars.empty()) {
-            groups->push_back(std::move(group));
-          }
         }
       }
     });
+    if (!group.dst_vars.empty()) {
+      groups->push_back(std::move(group));
+    }
   }
 
   /*!
@@ -352,6 +347,12 @@ private:
    * For other stmts: wrap with commit scope.
    */
   Stmt InjectCommitInto(const Stmt &stmt) {
+    if (auto *attr = stmt.as<AttrStmtNode>()) {
+      if (attr->attr_key == attr::kAIUSyncOpt) {
+        return AttrStmt(attr->node, attr->attr_key, attr->value,
+                        InjectCommitInto(attr->body));
+      }
+    }
     if (auto *if_node = stmt.as<IfThenElseNode>()) {
       Stmt then_branch = if_node->then_case;
       if (ContainsAIULoad(then_branch) && !ContainsCommitScope(then_branch)) {
@@ -369,6 +370,16 @@ private:
   }
 };
 
+class AIUSyncOptAnnotationStripper : public StmtExprMutator {
+public:
+  Stmt VisitStmt_(const AttrStmtNode *op) final {
+    if (op->attr_key == attr::kAIUSyncOpt) {
+      return VisitStmt(op->body);
+    }
+    return StmtExprMutator::VisitStmt_(op);
+  }
+};
+
 using namespace tirx::transform;
 
 tvm::transform::Pass InjectAIUSyncBarrier() {
@@ -378,9 +389,11 @@ tvm::transform::Pass InjectAIUSyncBarrier() {
     // Only lower annotations to Call nodes when this pass actually inserted
     // commit scopes (stage=0 path). For stage>0, InjectSoftwarePipeline already
     // lowered its own annotations internally.
-    if (ContainsCommitScope(n->body)) {
+    const bool has_commit_scope = ContainsCommitScope(n->body);
+    if (has_commit_scope) {
       n->body = software_pipeline::LowerAsyncCommitWaitAttrs(n->body);
     }
+    n->body = AIUSyncOptAnnotationStripper()(n->body);
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tl.InjectAIUSyncBarrier", {});

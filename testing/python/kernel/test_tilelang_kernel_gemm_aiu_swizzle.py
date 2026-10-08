@@ -40,8 +40,8 @@ def gemm_kernel(block_M, block_N, block_K, dtype=T.float16, accum_dtype=T.float3
 
             T.clear(C_local)
             for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=3):
-                T.copy(A[by * block_M, k * block_K], A_shared)
-                T.copy(B[k * block_K, bx * block_N], B_shared)
+                T.copy(A[by * block_M, k * block_K], A_shared, prefer_instruction="aiu")
+                T.copy(B[k * block_K, bx * block_N], B_shared, prefer_instruction="aiu")
                 T.gemm(A_shared, B_shared, C_local)
 
             T.copy(C_local, C[by * block_M, bx * block_N])

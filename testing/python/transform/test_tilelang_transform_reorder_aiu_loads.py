@@ -1,6 +1,6 @@
 """Unit tests for ReorderAIULoads pass.
 
-Verifies that ppu_aiu_load instructions are reordered by their dst buffer's
+Verifies that aiu_load instructions are reordered by their dst buffer's
 first-use position within SeqStmt blocks in stage=0 scenarios.
 
 Scenarios covered:
@@ -17,7 +17,7 @@ import tilelang  # noqa: F401 — ensures tl.ppu_aiu_load Op is registered & set
 import tilelang.ppu.transform
 import tilelang.testing
 import tvm
-from tvm import tir
+from tvm import tirx as tir
 
 
 # =========================================================================
@@ -29,7 +29,7 @@ def _make_access_ptr(buf):
     """Create tvm_access_ptr(placeholder, buf.data, 0, 128, 2)."""
     return tir.Call(
         "handle",
-        tvm.ir.Op.get("tir.tvm_access_ptr"),
+        tvm.ir.Op.get("tirx.tvm_access_ptr"),
         [
             tir.IntImm("int32", 0),  # type placeholder (pass ignores)
             buf.data,  # buffer data var (pass extracts this)
@@ -40,30 +40,32 @@ def _make_access_ptr(buf):
     )
 
 
-def _make_ppu_aiu_load(buf, extra_var=None):
-    """Create Evaluate(ppu_aiu_load(tvm_access_ptr(buf), ...)).
-
-    Constructs a 10-argument ppu_aiu_load call:
-      args[0] = smem_ptr (tvm_access_ptr, carries dst buffer)
-      args[1..9] = gmem_ptr, dim_c, dim_w, cube_c, cube_w,
-                   stride_w_bytes, start_c, start_w, swzl_mode
+def _make_raw_aiu_load(buf, extra_var=None):
+    """Create a manual low-level Evaluate(aiu_load(...)).
 
     Parameters
     ----------
     buf : tir.Buffer
-        The destination buffer for the ppu_aiu_load.
+        The destination buffer for the aiu_load.
     extra_var : tir.Var, optional
-        If provided, placed in args[1] (gmem_ptr) to create an address dependency.
+        If provided, placed in args[1] to create an address dependency.
     """
     access = _make_access_ptr(buf)
-    args = [access]  # args[0] = smem_ptr (access_ptr)
-    for i in range(9):
-        if i == 0 and extra_var is not None:
-            args.append(extra_var)
-        else:
-            args.append(tir.IntImm("int32", 0))
+    args = [access]
+    for i in range(1, 10):
+        args.append(extra_var if i == 1 and extra_var is not None else tir.IntImm("int32", 0))
     call = tir.Call("handle", tir.op.Op.get("tl.ppu_aiu_load"), args)
     return tir.Evaluate(call)
+
+
+def _make_aiu_load(buf, extra_var=None):
+    """Create a sync-copy-origin AIU load with its optimization marker."""
+    return tir.AttrStmt(
+        tir.IntImm("int32", 0),
+        "aiu_sync_opt",
+        tir.IntImm("int32", 1),
+        _make_raw_aiu_load(buf, extra_var),
+    )
 
 
 def _make_use(buf):
@@ -81,7 +83,7 @@ def _run_pass(body, params, buffer_map):
 
 
 def _extract_aiu_dst_names(body):
-    """Extract dst buffer var names from top-level ppu_aiu_load calls in a SeqStmt.
+    """Extract dst buffer var names from top-level aiu_load calls in a SeqStmt.
 
     Only examines direct children of the SeqStmt; loads inside containers
     (For, If, Block) are NOT reported.
@@ -90,6 +92,8 @@ def _extract_aiu_dst_names(body):
     names = []
     aiu_op = tir.op.Op.get("tl.ppu_aiu_load")
     for stmt in body:
+        while isinstance(stmt, tir.AttrStmt) and stmt.attr_key == "aiu_sync_opt":
+            stmt = stmt.body
         if isinstance(stmt, tir.Evaluate) and isinstance(stmt.value, tir.Call) and stmt.value.op.same_as(aiu_op):
             access = stmt.value.args[0]
             names.append(access.args[1].name)
@@ -109,9 +113,9 @@ def test_basic_reorder():
 
     body = tir.SeqStmt(
         [
-            _make_ppu_aiu_load(A),  # slot 0
-            _make_ppu_aiu_load(B),  # slot 1
-            _make_ppu_aiu_load(C),  # slot 2
+            _make_aiu_load(A),  # slot 0
+            _make_aiu_load(B),  # slot 1
+            _make_aiu_load(C),  # slot 2
             _make_use(B),  # pos 3: first use of B
             _make_use(A),  # pos 4: first use of A
             _make_use(C),  # pos 5: first use of C
@@ -133,13 +137,18 @@ def test_dependency_blocks_move():
 
     addr_var = tir.Var("addr_var", "int32")
     # LetStmt defines addr_var at position 1; body is a trivial nop.
-    let_stmt = tir.LetStmt(addr_var, tir.IntImm("int32", 42), tir.Evaluate(tir.IntImm("int32", 0)))
+    let_stmt = tir.SeqStmt(
+        [
+            tir.Bind(addr_var, tir.IntImm("int32", 42)),
+            tir.Evaluate(tir.IntImm("int32", 0)),
+        ]
+    )
 
     body = tir.SeqStmt(
         [
-            _make_ppu_aiu_load(A),  # slot 0: load A (no deps)
+            _make_aiu_load(A),  # slot 0: load A (no deps)
             let_stmt,  # pos 1: defines addr_var
-            _make_ppu_aiu_load(B, extra_var=addr_var),  # slot 2: load B (needs addr_var)
+            _make_aiu_load(B, extra_var=addr_var),  # slot 2: load B (needs addr_var)
             _make_use(B),  # pos 3: first use B
             _make_use(A),  # pos 4: first use A
         ]
@@ -162,13 +171,18 @@ def test_bundle_forward_move():
 
     addr_var = tir.Var("addr_var", "int32")
     # LetStmt defines addr_var at position 0, before both loads.
-    let_stmt = tir.LetStmt(addr_var, tir.IntImm("int32", 42), tir.Evaluate(tir.IntImm("int32", 0)))
+    let_stmt = tir.SeqStmt(
+        [
+            tir.Bind(addr_var, tir.IntImm("int32", 42)),
+            tir.Evaluate(tir.IntImm("int32", 0)),
+        ]
+    )
 
     body = tir.SeqStmt(
         [
             let_stmt,  # pos 0: defines addr_var
-            _make_ppu_aiu_load(A),  # slot 1: load A (no deps)
-            _make_ppu_aiu_load(B, extra_var=addr_var),  # slot 2: load B (needs addr_var @ pos 0)
+            _make_aiu_load(A),  # slot 1: load A (no deps)
+            _make_aiu_load(B, extra_var=addr_var),  # slot 2: load B (needs addr_var @ pos 0)
             _make_use(B),  # pos 3: first use B
             _make_use(A),  # pos 4: first use A
         ]
@@ -191,8 +205,8 @@ def test_stage_gt0_skipped():
 
     loop_body = tir.SeqStmt(
         [
-            _make_ppu_aiu_load(A),
-            _make_ppu_aiu_load(B),
+            _make_aiu_load(A),
+            _make_aiu_load(B),
             _make_use(B),  # B used first
             _make_use(A),
         ]
@@ -221,27 +235,27 @@ def test_stage_gt0_skipped():
 def test_container_boundary():
     """Loads inside a For container are NOT treated as top-level loads.
 
-    Only top-level ppu_aiu_loads (A, C) are reordered; B inside For stays put.
+    The loop is a boundary: top-level loads cannot move across it.
     """
     A = tir.decl_buffer((128,), "float16", name="A")
     B = tir.decl_buffer((128,), "float16", name="B")
     C = tir.decl_buffer((128,), "float16", name="C")
 
-    # B's ppu_aiu_load is inside a For loop (container node)
+    # B's aiu_load is inside a For loop (container node)
     loop_var = tir.Var("j", "int32")
     inner_for = tir.For(
         loop_var,
         tir.IntImm("int32", 0),
         tir.IntImm("int32", 4),
         tir.ForKind.SERIAL,
-        _make_ppu_aiu_load(B),
+        _make_aiu_load(B),
     )
 
     body = tir.SeqStmt(
         [
-            _make_ppu_aiu_load(A),  # top-level load A (slot 0)
+            _make_aiu_load(A),  # top-level load A (slot 0)
             inner_for,  # container with load B (NOT a top-level load)
-            _make_ppu_aiu_load(C),  # top-level load C (slot 2)
+            _make_aiu_load(C),  # top-level load C (slot 2)
             _make_use(C),  # pos 3: first use C
             _make_use(A),  # pos 4: first use A
         ]
@@ -251,11 +265,9 @@ def test_container_boundary():
     buf_map = {A.data: A, B.data: B, C.data: C}
     result = _run_pass(body, params, buf_map)
 
-    # Top-level ppu_aiu_loads: A (first_use=4), C (first_use=3).
-    # Sorted by first_use: C, A. So C moves to slot 0, A to slot 2.
-    # The For containing B stays at position 1.
+    # The loop may contain memory dependencies or synchronization.
     order = _extract_aiu_dst_names(result)
-    assert order == ["C", "A"], f"Expected ['C', 'A'], got {order}"
+    assert order == ["A", "C"], f"Expected ['A', 'C'], got {order}"
 
     # Verify the For loop remains at position 1
     assert isinstance(result[1], tir.For), "For loop should remain at position 1"
@@ -268,8 +280,8 @@ def test_slot_zero_assignment():
 
     body = tir.SeqStmt(
         [
-            _make_ppu_aiu_load(A),  # slot 0: load A
-            _make_ppu_aiu_load(B),  # slot 1: load B
+            _make_aiu_load(A),  # slot 0: load A
+            _make_aiu_load(B),  # slot 1: load B
             _make_use(B),  # pos 2: first use of B (immediately after loads)
             tir.Evaluate(tir.IntImm("int32", 0)),  # some compute
             tir.Evaluate(tir.IntImm("int32", 0)),  # some compute
@@ -297,8 +309,8 @@ def test_call_arg_use_detection():
 
     body = tir.SeqStmt(
         [
-            _make_ppu_aiu_load(A),  # slot 0: load A
-            _make_ppu_aiu_load(B),  # slot 1: load B
+            _make_aiu_load(A),  # slot 0: load A
+            _make_aiu_load(B),  # slot 1: load B
             use_B,  # pos 2: first use of B
             call_using_A,  # pos 3: first use of A (via Call arg)
         ]
@@ -310,6 +322,66 @@ def test_call_arg_use_detection():
 
     order = _extract_aiu_dst_names(result)
     assert order == ["B", "A"], f"Expected ['B', 'A'], got {order}"
+
+
+def test_manual_aiu_load_is_not_reordered():
+    """Manual low-level aiu_load lacks the sync-opt marker and is ignored."""
+    A = tir.decl_buffer((128,), "float16", name="A")
+    B = tir.decl_buffer((128,), "float16", name="B")
+
+    body = tir.SeqStmt(
+        [
+            _make_raw_aiu_load(A),
+            _make_raw_aiu_load(B),
+            _make_use(B),
+            _make_use(A),
+        ]
+    )
+
+    params = [A.data, B.data]
+    buf_map = {A.data: A, B.data: B}
+    result = _run_pass(body, params, buf_map)
+
+    order = _extract_aiu_dst_names(result)
+    assert order == ["A", "B"], f"Expected ['A', 'B'], got {order}"
+
+
+def test_conditional_address_write_blocks_reordering():
+    a = tir.decl_buffer((128,), "float16", name="A", scope="shared")
+    b = tir.decl_buffer((128,), "float16", name="B", scope="shared")
+    addr = tir.decl_buffer((1,), "int32", name="addr", scope="local")
+    flag = tir.Var("flag", "bool")
+    branch = tir.IfThenElse(
+        flag,
+        tir.SeqStmt(
+            [
+                _make_aiu_load(a),
+                tir.BufferStore(addr, tir.IntImm("int32", 9), [0]),
+            ]
+        ),
+        None,
+    )
+    body = tir.SeqStmt([branch, _make_aiu_load(b, tir.BufferLoad(addr, [0])), _make_use(b), _make_use(a)])
+    result = _run_pass(body, [flag, a.data, b.data, addr.data], {a.data: a, b.data: b, addr.data: addr})
+    tvm.ir.assert_structural_equal(result, body)
+
+
+def test_loads_cannot_cross_a_conditional_side_effect():
+    a = tir.decl_buffer((128,), "float16", name="A", scope="shared")
+    b = tir.decl_buffer((128,), "float16", name="B", scope="shared")
+    addr = tir.decl_buffer((1,), "int32", name="addr", scope="local")
+    flag = tir.Var("flag", "bool")
+    body = tir.SeqStmt(
+        [
+            _make_aiu_load(a),
+            tir.IfThenElse(flag, tir.BufferStore(addr, tir.IntImm("int32", 9), [0]), None),
+            _make_aiu_load(b, tir.BufferLoad(addr, [0])),
+            _make_use(b),
+            _make_use(a),
+        ]
+    )
+    result = _run_pass(body, [flag, a.data, b.data, addr.data], {a.data: a, b.data: b, addr.data: addr})
+    tvm.ir.assert_structural_equal(result, body)
 
 
 if __name__ == "__main__":

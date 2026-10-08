@@ -14,6 +14,8 @@
 #include "layout/layout.h"
 #include "op/builtin.h"
 #include "op/utils.h"
+#include "ppu/attr.h"
+#include "ppu/layout/ppu_gemm_layouts.h"
 #include "ppu/op/copy.h"
 #include "transform/common/loop_fusion_utils.h"
 #include "transform/loop_partition.h"
@@ -551,6 +553,9 @@ Stmt Copy::LowerCPAsync(const CopyNode &op, const LowerArgs &lower_args,
       DLOG(WARNING)
           << "Pipeline-managed async copy fallback to normal copy because "
              "cp.async rewrite found no eligible global->shared store.";
+      if (op.dst->dtype.is_float4_e2m1fn()) {
+        return LowerNormal(op, lower_args, analyzer);
+      }
       return lowered_loop;
     }
     if (explicit_async_semantics) {
@@ -574,7 +579,55 @@ Stmt Copy::LowerCPAsync(const CopyNode &op, const LowerArgs &lower_args,
 
 Stmt Copy::LowerNormal(const CopyNode &op, const LowerArgs &lower_args,
                        arith::Analyzer *analyzer) {
-  return tl::LowerNormalCopy(op, lower_args, analyzer);
+  Stmt result = tl::LowerNormalCopy(op, lower_args, analyzer);
+  if (!op.dst->dtype.is_float4_e2m1fn() || op.src->dtype != op.dst->dtype ||
+      (!IsGlobalBuffer(op.src) && !IsSharedBuffer(op.src)) ||
+      (!IsGlobalBuffer(op.dst) && !IsSharedBuffer(op.dst))) {
+    return result;
+  }
+
+  class PackedStoreChecker : public StmtVisitor {
+  public:
+    bool scalar_store = false;
+    void VisitStmt_(const ForNode *node) final {
+      const bool previous = packed_vector_;
+      if (node->kind == ForKind::kVectorized) {
+        const auto *extent = node->extent.as<IntImmNode>();
+        packed_vector_ |=
+            extent && extent->value >= 2 && extent->value % 2 == 0;
+      }
+      StmtVisitor::VisitStmt_(node);
+      packed_vector_ = previous;
+    }
+    void VisitStmt_(const BufferStoreNode *node) final {
+      if (node->buffer->dtype.is_float4_e2m1fn() &&
+          node->value.dtype().lanes() == 1 && !packed_vector_) {
+        scalar_store = true;
+      }
+    }
+
+  private:
+    bool packed_vector_ = false;
+  } checker;
+  checker(result);
+  if (!checker.scalar_store)
+    return result;
+
+  // Scalar FP4 stores update half a byte via read-modify-write. If the
+  // vectorizer cannot establish whole-byte ownership, use one writer for
+  // the region rather than racing neighboring nibbles across threads.
+  class SerialCopy : public StmtMutator {
+    Stmt VisitStmt_(const ForNode *node) final {
+      auto loop = Downcast<For>(StmtMutator::VisitStmt_(node));
+      loop.CopyOnWrite()->kind = ForKind::kSerial;
+      return loop;
+    }
+  } serial;
+  PrimExpr first_thread = lower_args.thread_bounds.defined()
+                              ? lower_args.thread_bounds->min
+                              : make_zero(lower_args.thread_var.dtype());
+  return IfThenElse(lower_args.thread_var == first_thread,
+                    serial(op.MakeSIMTLoop(analyzer)));
 }
 
 Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
@@ -735,34 +788,40 @@ static void RequireAIUSmemAlignment(const LowerArgs &lower_args,
 
 Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
                     arith::Analyzer *analyzer) {
+  bool no_implicit_commit_wait = GetNoImplicitAsyncCommitWait(op);
+  bool preferred_aiu = false;
+  if (auto prefer = op.annotations.Get("prefer_instruction")) {
+    if (auto str = prefer->as<StringImmNode>()) {
+      preferred_aiu = str->value == "aiu";
+    }
+  }
+
+  if (!preferred_aiu) {
+    ICHECK(false) << "AIU lowering is reachable only through an AIU copy "
+                     "preference.";
+  }
   Buffer global_tensor = op.src;
   Buffer shared_tensor = op.dst;
   Buffer shared_tensor_unmapped = shared_tensor;
   Array<Range> global_range = op.src_range;
   Array<Range> shared_range = op.dst_range;
 
-  bool explicit_aiu = false;
-  if (auto prefer = op.annotations.Get("prefer_instruction")) {
-    if (auto str = prefer->as<StringImmNode>()) {
-      explicit_aiu = str->value == "aiu";
-    }
-  }
-  auto fallback_to_normal = [&](const std::string &reason) {
-    if (explicit_aiu) {
-      LOG(FATAL) << "T.copy prefer_instruction=\"aiu\" could not be honored: "
-                 << reason << ", src=" << op.src->name
-                 << ", dst=" << op.dst->name;
-    }
-    DLOG(WARNING) << "PPU AIU copy fallback to normal copy: " << reason
-                  << ", src=" << op.src->name << ", dst=" << op.dst->name;
-    return LowerNormal(op, lower_args, analyzer);
+  auto fallback = [&](const std::string &reason) -> Stmt {
+    DLOG(WARNING) << "AIU copy preference falls back to "
+                     "cp.async: "
+                  << reason << ", src=" << op.src->name
+                  << ", dst=" << op.dst->name;
+    return LowerCPAsync(op, lower_args, analyzer);
   };
 
   if (!TargetIsPPU(lower_args.target) || !TargetHasAiuCopy(lower_args.target)) {
-    return fallback_to_normal("target has no PPU AIU copy support");
+    return fallback("target has no PPU AIU copy support");
   }
   if (lower_args.layout_map.count(global_tensor)) {
-    return fallback_to_normal("global tensor has a non-linear layout");
+    return fallback("global tensor has a non-linear layout");
+  }
+  if (!IsGlobalBuffer(global_tensor) || !IsSharedBuffer(shared_tensor)) {
+    return fallback("AIU only supports global -> shared copies");
   }
   if (global_tensor->dtype != shared_tensor->dtype) {
     ICHECK_EQ(global_tensor->dtype, shared_tensor->dtype)
@@ -775,13 +834,12 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
       !global_tensor->dtype.is_float8_e4m3fn() &&
       !global_tensor->dtype.is_float8_e5m2() &&
       !global_tensor->dtype.is_float4_e2m1fn()) {
-    return fallback_to_normal(
-        "AIU copy only supports fp16/bf16/fp8/fp4 payloads");
+    return fallback("AIU copy only supports fp16/bf16/fp8/fp4 payloads");
   }
 
   auto rank = global_tensor->shape.size();
   if (rank < 2 || rank > 5) {
-    return fallback_to_normal("global tensor rank is outside [2, 5]");
+    return fallback("global tensor rank is outside [2, 5]");
   }
 
   Array<PrimExpr> shared_indices;
@@ -824,7 +882,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   for (size_t i = 1; i < global_stride.size(); i++) {
     if (auto stride = global_stride[i].as<IntImmNode>()) {
       if (stride->value % 16 != 0 || stride->value >= (1ULL << 63)) {
-        return fallback_to_normal("unsupported global stride");
+        return fallback("unsupported global stride");
       }
     }
   }
@@ -840,8 +898,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
       shared_range_idx++;
     }
     if (shared_range_idx >= shared_range.size()) {
-      return fallback_to_normal(
-          "global and shared ranges have incompatible ranks");
+      return fallback("global and shared ranges have incompatible ranks");
     }
     auto s_range = shared_range[shared_range_idx++];
     ICHECK(StructuralEqual()(g_range->extent, s_range->extent))
@@ -860,7 +917,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     }
   }
   if (cube_layout_pos.size() != 2) {
-    return fallback_to_normal("AIU global cube shape is not 2D");
+    return fallback("AIU global cube shape is not 2D");
   }
 
   Layout shared_layout;
@@ -872,22 +929,26 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     shared_tensor = lower_args.buffer_remap.at(shared_tensor);
   }
   if (!shared_layout.defined()) {
-    return fallback_to_normal("shared tensor has no swizzled layout");
-  }
-  if (StructuralEqual()(shared_layout,
-                        Copy::ComputeLinearLayout(shared_tensor_unmapped))) {
-    return fallback_to_normal("shared tensor uses linear layout");
+    return fallback("shared tensor has no layout");
   }
 
+  AIUSharedLayoutClass layout_class =
+      ClassifySharedLayoutForAIU(shared_layout, shared_tensor_unmapped);
   int swizzle = -1;
-  SwizzleMode swizzle_mode =
-      DetectSwizzleMode(shared_layout, shared_tensor_unmapped);
-  if (swizzle_mode == SwizzleMode::Swizzle64B()) {
+  int swizzle_bytes = 0;
+  switch (layout_class) {
+  case AIUSharedLayoutClass::kSwizzle64:
     swizzle = 1;
-  } else if (swizzle_mode == SwizzleMode::Swizzle128B()) {
+    swizzle_bytes = 64;
+    break;
+  case AIUSharedLayoutClass::kSwizzle128:
     swizzle = 0;
-  } else {
-    return fallback_to_normal("shared layout is not 64B/128B swizzled");
+    swizzle_bytes = 128;
+    break;
+  case AIUSharedLayoutClass::kSwizzle32:
+    return fallback("AIU does not support 32B swizzle layouts");
+  default:
+    return fallback("the shared layout is not a canonical 64B/128B swizzle");
   }
 
   RequireAIUSmemAlignment(lower_args, shared_tensor_unmapped);
@@ -897,113 +958,71 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   auto thread_extent = as_const_int(lower_args.thread_bounds->extent);
   if (inner_box_dim == nullptr || outer_box_dim == nullptr ||
       thread_extent == nullptr) {
-    return fallback_to_normal("AIU split dimensions must be static integers");
+    return fallback("AIU split dimensions must be static integers");
   }
 
   int inner_box_dim_value = static_cast<int>(*inner_box_dim);
   int outer_box_dim_value = static_cast<int>(*outer_box_dim);
   int thread_extent_value = static_cast<int>(*thread_extent);
+  if (inner_box_dim_value <= 0 || outer_box_dim_value <= 0 ||
+      thread_extent_value <= 0 || thread_extent_value % 32 != 0) {
+    return fallback("AIU requires positive static dimensions and a multiple "
+                    "of 32 threads");
+  }
+  if (outer_box_dim_value > 2048) {
+    return fallback("AIU requires at most 2048 rows");
+  }
 
-  // FP4 sub-byte: AIU .b8 requires row width >= 64B (minimum swizzle
-  // granularity). FP4 with block_K < 128 -> row_bytes < 64 -> fallback to SIMT
-  // copy.
   int dtype_bits = global_tensor->dtype.bits();
   bool is_sub_byte = (dtype_bits < 8);
-  if (is_sub_byte) {
-    int64_t row_bytes =
-        static_cast<int64_t>(inner_box_dim_value) * dtype_bits / 8;
-    if (row_bytes < 64) {
-      return fallback_to_normal("AIU sub-byte dtype row width " +
-                                std::to_string(row_bytes) +
-                                "B < 64B minimum swizzle granularity");
-    }
+  int packing_factor = is_sub_byte ? 8 / dtype_bits : 1;
+  int64_t inner_box_bytes =
+      AiuBytesFromElements(inner_box_dim_value, global_tensor->dtype);
+  if (inner_box_bytes <= 0 || inner_box_bytes > 1024) {
+    return fallback("AIU requires 0 < width <= 1024 bytes");
   }
-  // Sub-byte: shape_0 and coord_0 are FloorDiv'd by packing_factor; reject
-  // values that are not exactly divisible to avoid silent truncation.
+  if (inner_box_bytes % swizzle_bytes != 0) {
+    return fallback(std::to_string(swizzle_bytes) +
+                    "B swizzle requires the tile width to be a multiple of " +
+                    std::to_string(swizzle_bytes) + " bytes");
+  }
   if (is_sub_byte) {
-    int pf = 8 / dtype_bits;
+    if (inner_box_dim_value % packing_factor != 0) {
+      return fallback("sub-byte tile width is not divisible by the packing "
+                      "factor");
+    }
     if (auto *shape_imm = global_shape[0].as<IntImmNode>()) {
-      if (shape_imm->value % pf != 0) {
-        return fallback_to_normal(
+      if (shape_imm->value % packing_factor != 0) {
+        return fallback(
             "sub-byte inner extent not divisible by packing factor");
       }
-    } else if (!analyzer->CanProveEqual(FloorMod(global_shape[0], pf), 0)) {
-      return fallback_to_normal(
-          "sub-byte inner extent not divisible by packing factor");
+    } else if (!analyzer->CanProveEqual(
+                   FloorMod(global_shape[0], packing_factor), 0)) {
+      return fallback("sub-byte inner extent not divisible by packing factor");
     }
     if (auto *coord_imm = global_coords[0].as<IntImmNode>()) {
-      if (coord_imm->value % pf != 0) {
-        return fallback_to_normal(
+      if (coord_imm->value % packing_factor != 0) {
+        return fallback(
             "sub-byte inner offset not divisible by packing factor");
       }
-    } else if (!analyzer->CanProveEqual(FloorMod(global_coords[0], pf), 0)) {
-      return fallback_to_normal(
-          "sub-byte inner offset not divisible by packing factor");
+    } else if (!analyzer->CanProveEqual(
+                   FloorMod(global_coords[0], packing_factor), 0)) {
+      return fallback("sub-byte inner offset not divisible by packing factor");
     }
   }
 
-  // instruction_dim_elems: always in elements (for IR-level addressing and
-  // splits). For sub-byte types, hardware .b8 args are in bytes; convert when
-  // pushing args.
-  int instruction_dim_elems = inner_box_dim_value;
-  if (swizzle_mode == SwizzleMode::Swizzle64B()) {
-    instruction_dim_elems = AiuElementsForBytes(64, shared_tensor->dtype);
-  } else if (swizzle_mode == SwizzleMode::Swizzle128B()) {
-    instruction_dim_elems = AiuElementsForBytes(128, shared_tensor->dtype);
-  }
-  if (instruction_dim_elems > 256) {
-    ICHECK(inner_box_dim_value % 256 == 0)
-        << "inner_box_dim: " << inner_box_dim_value
-        << " is not divisible by 256";
-    instruction_dim_elems = 256;
-  }
-  ICHECK(inner_box_dim_value % instruction_dim_elems == 0)
-      << "inner_box_dim: " << inner_box_dim_value
-      << " is not divisible by instruction_dim: " << instruction_dim_elems;
-
-  int64_t inner_box_bytes =
-      AiuBytesFromElements(instruction_dim_elems, shared_tensor->dtype);
-  int max_swizzle_bytes = swizzle_mode == SwizzleMode::Swizzle64B() ? 64 : 128;
-  if (inner_box_bytes > max_swizzle_bytes) {
-    return fallback_to_normal("AIU inner box exceeds swizzle byte width");
-  }
-
-  int inner_splits = inner_box_dim_value / instruction_dim_elems;
-  int num_warps = std::max(1, thread_extent_value / 32);
-  int target_outer_splits = std::max(1, num_warps / inner_splits);
-  int outer_splits = 1;
-  for (int factor = 1;
-       factor <= std::min(outer_box_dim_value, target_outer_splits); ++factor) {
-    if (outer_box_dim_value % factor == 0) {
-      outer_splits = factor;
-    }
-  }
-  int outer_per_warp = outer_box_dim_value / outer_splits;
-  int participating_warps = inner_splits * outer_splits;
-
-  // Ensure outer_per_warp >= swizzle row period (8 for both 128B and 64B
-  // layouts). If the warp split is too fine, reduce outer_splits to meet the
-  // constraint.
-  constexpr int kSwizzleRowPeriod = 8;
-  if (outer_per_warp < kSwizzleRowPeriod) {
-    if (outer_box_dim_value < kSwizzleRowPeriod) {
-      return LowerNormal(op, lower_args, analyzer);
-    }
-    // Find the largest factor of outer_box_dim_value that yields outer_per_warp
-    // >= kSwizzleRowPeriod
-    int max_outer_splits = outer_box_dim_value / kSwizzleRowPeriod;
-    for (int s = max_outer_splits; s >= 1; s--) {
-      if (outer_box_dim_value % s == 0) {
-        outer_splits = s;
-        break;
-      }
-    }
-    outer_per_warp = outer_box_dim_value / outer_splits;
-    participating_warps = inner_splits * outer_splits;
+  int instruction_dim_elems =
+      AiuElementsForBytes(swizzle_bytes, global_tensor->dtype);
+  int num_warps = thread_extent_value / 32;
+  auto partition = FindAIUWarpPartition(
+      /*swizzled=*/true, swizzle_bytes, outer_box_dim_value, inner_box_bytes,
+      num_warps);
+  if (!partition.has_value()) {
+    return fallback("no legal even AIU warp partition exists");
   }
 
   smem_box.Set(0, PrimExpr(instruction_dim_elems));
-  smem_box.Set(cube_layout_pos[1], PrimExpr(outer_per_warp));
+  smem_box.Set(cube_layout_pos[1], PrimExpr(partition->rows_per_warp));
 
   // Compute shape_0 (inner dim, in elements) and shape_1 (outer dim, in rows).
   PrimExpr shape_0_elements;
@@ -1026,60 +1045,82 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     total_elements *= e;
   }
 
-  // Warp partitioning (unchanged).
   PrimExpr warp_id =
       FloorDiv(lower_args.thread_var, IntImm(DataType::Int(32), 32));
-  PrimExpr warp_inner_idx =
-      FloorMod(warp_id, IntImm(DataType::Int(32), inner_splits));
-  PrimExpr warp_outer_idx =
-      FloorDiv(warp_id, IntImm(DataType::Int(32), inner_splits));
-  PrimExpr shared_addr = shared_tensor.access_ptr(
-      2, DataType::Handle(), 1,
-      shared_offset +
-          warp_inner_idx * (instruction_dim_elems * outer_box_dim_value) +
-          warp_outer_idx * (instruction_dim_elems * outer_per_warp),
-      total_elements);
+  PrimExpr row_split =
+      FloorDiv(warp_id, IntImm(DataType::Int(32), partition->col_splits));
+  PrimExpr col_group =
+      FloorMod(warp_id, IntImm(DataType::Int(32), partition->col_splits)) *
+      partition->blocks_per_warp;
 
-  // Coordinate computation (in elements).
-  global_coords.Set(0,
-                    global_coords[0] + instruction_dim_elems * warp_inner_idx);
-  global_coords.Set(cube_layout_pos[1], global_coords[cube_layout_pos[1]] +
-                                            outer_per_warp * warp_outer_idx);
-  auto compute_coord = [&](size_t begin, size_t end) {
-    PrimExpr result = 0;
-    PrimExpr stride = 1;
-    for (size_t i = begin; i <= end; ++i) {
-      result += global_coords[i] * stride;
-      stride *= global_shape[i];
-    }
-    return result;
-  };
-  PrimExpr coord_0_elements = compute_coord(0, cube_layout_pos[1] - 1);
-  PrimExpr coord_1_rows = compute_coord(cube_layout_pos[1], rank - 1);
+  std::vector<Stmt> load_stmts;
+  load_stmts.reserve(partition->blocks_per_warp);
+  for (int block = 0; block < partition->blocks_per_warp; ++block) {
+    PrimExpr col_block = col_group + block;
+    PrimExpr shared_addr = shared_tensor.access_ptr(
+        2, DataType::Handle(), 1,
+        shared_offset +
+            row_split * instruction_dim_elems * partition->rows_per_warp +
+            col_block * instruction_dim_elems * outer_box_dim_value,
+        total_elements);
 
-  // Build 10-parameter byte-mode args for ppu_aiu_load.
-  // C-dimension params (dim_c, cube_c, start_c) are in bytes;
-  // W-dimension params (dim_w, cube_w, start_w) are in rows.
-  DataType dtype = global_tensor->dtype;
-  Array<PrimExpr> args;
-  args.reserve(10);
-  args.push_back(shared_addr); // [0] smem_ptr
-  args.push_back(global_addr); // [1] gmem_ptr
-  args.push_back(
-      AiuBytesFromElements(shape_0_elements, dtype)); // [2] dim_c (bytes)
-  args.push_back(shape_1_rows);                       // [3] dim_w (rows)
-  args.push_back(AiuBytesFromElements(PrimExpr(instruction_dim_elems),
-                                      dtype));       // [4] cube_c (bytes)
-  args.push_back(smem_box[cube_layout_pos[1]]);      // [5] cube_w (rows)
-  args.push_back(global_stride[cube_layout_pos[1]]); // [6] stride_w_bytes
-  args.push_back(
-      AiuBytesFromElements(coord_0_elements, dtype)); // [7] start_c (bytes)
-  args.push_back(coord_1_rows);                       // [8] start_w (rows)
-  args.push_back(swizzle);                            // [9] swzl_mode
+    Array<PrimExpr> local_global_coords = global_coords;
+    local_global_coords.Set(0, local_global_coords[0] +
+                                   instruction_dim_elems * col_block);
+    local_global_coords.Set(cube_layout_pos[1],
+                            local_global_coords[cube_layout_pos[1]] +
+                                row_split * partition->rows_per_warp);
+    auto compute_local_coord = [&](size_t begin, size_t end) {
+      PrimExpr result = 0;
+      PrimExpr stride = 1;
+      for (size_t i = begin; i <= end; ++i) {
+        result += local_global_coords[i] * stride;
+        stride *= global_shape[i];
+      }
+      return result;
+    };
+    PrimExpr coord_0_elements = compute_local_coord(0, cube_layout_pos[1] - 1);
+    PrimExpr coord_1_rows = compute_local_coord(cube_layout_pos[1], rank - 1);
+    DataType dtype = global_tensor->dtype;
+    Array<PrimExpr> args;
+    args.reserve(10);
+    args.push_back(shared_addr);
+    args.push_back(global_addr);
+    args.push_back(AiuBytesFromElements(shape_0_elements, dtype));
+    args.push_back(shape_1_rows);
+    args.push_back(
+        AiuBytesFromElements(PrimExpr(instruction_dim_elems), dtype));
+    args.push_back(smem_box[cube_layout_pos[1]]);
+    args.push_back(global_stride[cube_layout_pos[1]]);
+    args.push_back(AiuBytesFromElements(coord_0_elements, dtype));
+    args.push_back(coord_1_rows);
+    args.push_back(swizzle);
+    load_stmts.push_back(
+        Evaluate(Call(DataType::Handle(), ppu_aiu_load(), args)));
+  }
 
-  Stmt aiu_copy = Evaluate(Call(DataType::Handle(), ppu_aiu_load(), args));
-  return IfThenElse(LT(warp_id, IntImm(DataType::Int(32), participating_warps)),
-                    aiu_copy);
+  Stmt aiu_result =
+      load_stmts.size() == 1
+          ? load_stmts[0]
+          : SeqStmt(Array<Stmt>(load_stmts.begin(), load_stmts.end()));
+  Stmt aiu_statement = IfThenElse(
+      LT(warp_id, IntImm(DataType::Int(32),
+                         partition->row_splits * partition->col_splits)),
+      aiu_result);
+  if (no_implicit_commit_wait) {
+    return aiu_statement;
+  }
+  if (preferred_aiu) {
+    aiu_result = AttrStmt(make_zero(DataType::Int(32)), attr::kAIUSyncOpt,
+                          IntImm(DataType::Int(32), 1), aiu_result);
+    aiu_statement = IfThenElse(
+        LT(warp_id, IntImm(DataType::Int(32),
+                           partition->row_splits * partition->col_splits)),
+        aiu_result);
+    aiu_statement = AttrStmt(make_zero(DataType::Int(32)), attr::kAIUSyncOpt,
+                             IntImm(DataType::Int(32), 1), aiu_statement);
+  }
+  return aiu_statement;
 }
 
 } // namespace ppu

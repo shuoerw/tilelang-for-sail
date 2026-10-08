@@ -288,16 +288,16 @@ TL_DEVICE void aiu_load(void const *smem_ptr, void const *global_ptr,
                         uint32_t cube_w, uint32_t stride_w_bytes,
                         int32_t start_c, int32_t start_w, uint32_t swzl_mode) {
   uint32_t smem_int_ptr = smem_ptr_to_uint(smem_ptr);
-  asm volatile("ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.swzl.b8"
-               " [%0], [%1], "
-               "{%2, %3, %4}, "
-               "{%5, %6, %7}, "
-               "{%8, %9}, "
-               "{%10, %11, %12}, %13;" ::"r"(smem_int_ptr),
-               "l"((void const *)(global_ptr)), "r"(dim_c), "r"(dim_w), "r"(1),
-               "r"(cube_c), "r"(cube_w), "r"(1), "r"(dim_c),
-               "r"(stride_w_bytes * dim_w), "r"(start_c), "r"(start_w), "r"(0),
-               "r"(swzl_mode));
+  asm volatile(
+      "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.L2::128B.padz.swzl.b8"
+      " [%0], [%1], "
+      "{%2, %3, %4}, "
+      "{%5, %6, %7}, "
+      "{%8, %9}, "
+      "{%10, %11, %12}, %13;" ::"r"(smem_int_ptr),
+      "l"((void const *)(global_ptr)), "r"(dim_c), "r"(dim_w), "r"(1),
+      "r"(cube_c), "r"(cube_w), "r"(1), "r"(dim_c), "r"(stride_w_bytes * dim_w),
+      "r"(start_c), "r"(start_w), "r"(0), "r"(swzl_mode));
 }
 
 } // namespace tl

@@ -377,8 +377,9 @@ Array<PrimExpr> LayoutNode::OutputShape() const {
       if (cib->min_value != arith::ConstIntBound::kNegInf &&
           cib->max_value != arith::ConstIntBound::kPosInf &&
           cib->min_value >= 0) {
-        // extent = max - min + 1, using 64-bit integer literal
-        ret.Set(i, Integer(cib->max_value - cib->min_value + 1));
+        // Physical indices remain relative to the allocation base, so a
+        // nonzero minimum still requires space for the unused prefix.
+        ret.Set(i, Integer(cib->max_value + 1));
       } else {
         // Last-resort conservative fallback to avoid OOB/crash
         // Prefer to keep dimension from known input_size_ if available.

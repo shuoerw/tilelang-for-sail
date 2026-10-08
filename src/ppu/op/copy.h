@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace tvm {
@@ -44,6 +45,17 @@ struct CopyInstSelection {
   bool supported = true;
   std::string reason;
 };
+
+struct AIUWarpPartition {
+  int row_splits = 1;
+  int col_splits = 1;
+  int blocks_per_warp = 1;
+  int rows_per_warp = 0;
+};
+
+std::optional<AIUWarpPartition>
+FindAIUWarpPartition(bool swizzled, int swizzle_bytes, int64_t height,
+                     int64_t width_bytes, int num_warps);
 
 // Final PPU lowering decision. Explicit T.tma_copy/T.async_copy semantics are
 // enforced here and reported through CopyInstSelection::reason.
