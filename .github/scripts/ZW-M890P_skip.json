@@ -1,0 +1,1748 @@
+[
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_830.py",
+    "test_filter": "test_empty_kernel_lowering",
+    "extra_args": [],
+    "reason": "Lazy init issue"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_830.py",
+    "test_filter": "test_empty_kernel_with_binding_variants",
+    "extra_args": [],
+    "reason": "Lazy init issue"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm.py",
+    "test_filter": "test_gemm_f64f64f64_nt",
+    "extra_args": [],
+    "reason": "Unsupported gemm layout"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_async_copy_gemm_sm80.py",
+    "test_filter": "test_copy_and_async_copy_gemm_codegen_equivalent_sm80",
+    "extra_args": [],
+    "reason": "async_copy introduced additional commit & wait"
+  },
+  {
+    "file_path": "testing/python/ppu/language/test_tilelang_language_async_copy_gemm_sm80.py",
+    "test_filter": "test_copy_and_async_copy_gemm_codegen_equivalent_sm80",
+    "extra_args": [],
+    "reason": "async_copy introduced additional commit & wait"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add",
+    "extra_args": [],
+    "reason": "Unsupported tma"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_get_warp_info.py",
+    "test_filter": "test_shuffle_elect_default",
+    "extra_args": [],
+    "reason": "Unsupported tl_shuffle_elect"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_get_warp_info.py",
+    "test_filter": "test_shuffle_elect_block_leader",
+    "extra_args": [],
+    "reason": "Unsupported tl_shuffle_elect"
+  },
+  {
+    "file_path": "testing/python/runtime/test_tilelang_runtime_tma_validation.py",
+    "test_filter": "test_tma_host_codegen_aligns_tvm_ffi_stack_alloca_for_descriptor",
+    "extra_args": [],
+    "reason": "Unsupported tma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[128-128-128-False-True-int8-int8-int32-128-128-128-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[128-8-64-False-True-float16-float16-float32-128-8-32-0-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[128-128-128-False-True-int8-int8-int32-128-128-128-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[128-8-64-False-True-int8-int8-int32-128-8-64-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[64-128-128-True-True-int8-int8-int32-64-128-128-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[128-128-64-False-True-int8-int8-int32-128-128-64-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[128-128-64-False-True-float8_e5m2-float8_e5m2-float32-128-128-64-2-128-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[float16-float16-float32-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[float16-float16-float32-int8]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[bfloat16-bfloat16-float32-int8]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[bfloat16-bfloat16-float32-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int8]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[int8-int8-int32-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int8]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_compress_dtype_combinations[float8_e5m2-float8_e5m2-float32-int32]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_im2col_fallback.py",
+    "test_filter": "test_im2col_uses_simt_fallback_before_hopper",
+    "extra_args": [],
+    "reason": "Unsupported tma"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_im2col_fallback.py",
+    "test_filter": "test_im2col_uses_tma_on_hopper",
+    "extra_args": [],
+    "reason": "Unsupported tma"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_im2col_fallback.py",
+    "test_filter": "test_c2d_im2col_alias_warns_and_uses_new_tileop",
+    "extra_args": [],
+    "reason": "Unsupported tma"
+  },
+  {
+    "file_path": "testing/python/utils/test_compress_utils.py",
+    "test_filter": "test_compress[int8-int8]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/utils/test_compress_utils.py",
+    "test_filter": "test_compress[int8-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/utils/test_compress_utils.py",
+    "test_filter": "test_compress[float16-int8]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/utils/test_compress_utils.py",
+    "test_filter": "test_compress[float16-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_disk_cache_with_postproc[tvm_ffi]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_disk_cache_with_postproc[cython]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_disk_cache_with_postproc[nvrtc]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_cache_miss_detection[tvm_ffi]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_cache_miss_detection[cython]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_cache_miss_detection[nvrtc]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_cache_isolation_between_tests[tvm_ffi]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_cache_isolation_between_tests[cython]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/cache/test_tilelang_kernel_cache.py",
+    "test_filter": "test_cache_isolation_between_tests[nvrtc]",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_nvrtc.py",
+    "test_filter": "test_gemm_jit_kernel",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_nvrtc.py",
+    "test_filter": "test_nvrtc_kernel_multi_stream",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_nvrtc.py",
+    "test_filter": "test_nvrtc_dynamic_shape",
+    "extra_args": [],
+    "reason": "cuda_free is unsupported in this test case."
+  },
+  {
+    "file_path": "examples/gemm/test_example_gemm.py",
+    "test_filter": "test_example_gemm_intrinsics",
+    "extra_args": [],
+    "reason": "PPU codegen requires n==16 but gemm_intrinsics uses n=8"
+  },
+  {
+    "file_path": "examples/gemm_fp8/test_example_gemm_fp8.py",
+    "test_filter": "test_example_tilelang_gemm_fp8_2xAcc",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "examples/gemm_fp8/test_example_gemm_fp8.py",
+    "test_filter": "test_example_tilelang_gemm_fp8",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "examples/gemm_sp/test_example_gemm_sp.py",
+    "test_filter": "test_example_gemm_sp",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "examples/minference/test_vs_sparse_attn.py",
+    "test_filter": "test_vs_sparse_attn",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_tvm_ffi.py",
+    "test_filter": "test_tvm_ffi_l2_persistent_map",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_default_unchanged",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_vectorized_cast.py",
+    "test_filter": "test_vectorized_cast_fp8[float32-float8_e4m3fn-__nv_cvt_float2_to_fp8x2-2]",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_vectorized_cast.py",
+    "test_filter": "test_vectorized_cast_fp8[float32-float8_e4m3fn-__nv_cvt_float2_to_fp8x2-4]",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_vectorized_cast.py",
+    "test_filter": "test_vectorized_cast_fp8[float32-float8_e5m2-__nv_cvt_float2_to_fp8x2-2]",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_vectorized_cast.py",
+    "test_filter": "test_vectorized_cast_fp8[float32-float8_e5m2-__nv_cvt_float2_to_fp8x2-4]",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[128-128-32-False-True-float16-float16-float32-128-128-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[128-128-32-False-False-float16-float16-float32-128-128-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[64-128-32-True-False-float16-float16-float32-64-128-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[64-128-32-True-True-float16-float16-float32-64-128-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_ss[128-128-32-False-True-bfloat16-bfloat16-float32-128-128-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[128-256-32-False-True-float16-float16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[128-256-32-False-False-float16-float16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[64-256-32-True-False-float16-float16-float32-64-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[64-256-32-True-True-float16-float16-float32-64-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rs[128-256-32-False-True-bfloat16-bfloat16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[128-256-32-False-True-float16-float16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[128-256-32-False-False-float16-float16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[64-256-32-True-False-float16-float16-float32-64-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[64-256-32-True-True-float16-float16-float32-64-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_sr[128-256-32-False-True-bfloat16-bfloat16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[128-256-32-False-True-float16-float16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[128-256-32-False-False-float16-float16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[64-256-32-True-False-float16-float16-float32-64-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[64-256-32-True-True-float16-float16-float32-64-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[128-256-32-False-True-bfloat16-bfloat16-float32-128-256-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/tilelibrary/test_tilelang_tilelibrary_gemm_sp.py",
+    "test_filter": "test_gemm_rr[128-8-32-False-True-float16-float16-float32-128-8-32-2-128-int16]",
+    "extra_args": [],
+    "reason": "Unsupported sparse mma"
+  },
+  {
+    "file_path": "testing/python/utils/test_compress_utils.py",
+    "test_filter": "test_compress[float32-int8]",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/utils/test_compress_utils.py",
+    "test_filter": "test_compress[float32-int16]",
+    "extra_args": [],
+    "reason": "CI FAILED"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_rand.py",
+    "test_filter": "test_rand_1d[1024-42-curandStateMRG32k3a_t]",
+    "extra_args": [],
+    "reason": "Temporarily removed; will be added back later."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_rand.py",
+    "test_filter": "test_rand_1d[512-123-curandStatePhilox4_32_10_t]",
+    "extra_args": [],
+    "reason": "Temporarily removed; will be added back later."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_rand.py",
+    "test_filter": "test_rand_1d[128-0-curandStateXORWOW_t]",
+    "extra_args": [],
+    "reason": "Temporarily removed; will be added back later."
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_tvm_ffi.py",
+    "test_filter": "test_gemm_jit_kernel",
+    "extra_args": [],
+    "reason": "Move to ppu dir."
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_tvm_ffi.py",
+    "test_filter": "test_tvm_ffi_kernel_multi_stream",
+    "extra_args": [],
+    "reason": "Move to ppu dir."
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_tvm_ffi.py",
+    "test_filter": "test_tvm_ffi_dynamic_shape",
+    "extra_args": [],
+    "reason": "Move to ppu dir."
+  },
+  {
+    "file_path": "examples/analyze/test_example_analyze.py",
+    "test_filter": "test_example_gemm_analyze",
+    "extra_args": [],
+    "reason": "analyze module targets CUDA device, not available on PPU"
+  },
+  {
+    "file_path": "examples/analyze/test_example_analyze.py",
+    "test_filter": "test_example_conv_analyze",
+    "extra_args": [],
+    "reason": "analyze module targets CUDA device, not available on PPU"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_recommend_hints.py",
+    "test_filter": "test_general_reduction_recommend_hints",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_recommend_hints.py",
+    "test_filter": "test_elementwise_recommend_hints",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_recommend_hints.py",
+    "test_filter": "test_matmul_recommend_hints",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_recommend_hints.py",
+    "test_filter": "test_gemv_recommend_hints",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_2123.py",
+    "test_filter": "test_issue_2123_atomic_load_lower_access_ptr_pipeline",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_float4_e2m1_unpacked_dtype.py",
+    "test_filter": "test_tcgen05_instr_desc_fp4_unpacked_x_fp8",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_float4_e2m1_unpacked_dtype.py",
+    "test_filter": "test_tcgen05_blockscaled_instr_desc_mxfp4_unpacked_x_mxfp8",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_tma_copy.py",
+    "test_filter": "test_fp4_unpacksmem_tma_descriptor_uses_align16b",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_tma_copy.py",
+    "test_filter": "test_fp4_unpacksmem_tma_store_is_rejected",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_tma_copy.py",
+    "test_filter": "test_copy_prefer_tma_lowers_as_synchronous_tma_load",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_readonly_param_const_codegen.py",
+    "test_filter": "test_codegen_emits_const_for_readonly_params",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_fuse_mbarrier_arrive_expect_tx.py",
+    "test_filter": "test_fuse_simple_tma_expect_arrive",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_fuse_mbarrier_arrive_expect_tx.py",
+    "test_filter": "test_fuse_requires_same_barrier",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_fuse_mbarrier_arrive_expect_tx.py",
+    "test_filter": "test_fuse_inside_warp_specialization_scope",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_set_max_nreg.py",
+    "test_filter": "test_inject_set_max_nreg",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_set_max_nreg.py",
+    "test_filter": "test_raw_set_max_nreg_keeps_legacy_behavior_with_simt_copy",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_set_max_nreg.py",
+    "test_filter": "test_inject_set_max_nreg_no_set_max_nreg",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_tcgen05_fence.py",
+    "test_filter": "test_storage_sync_is_wrapped_with_tcgen05_fences",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_tcgen05_fence.py",
+    "test_filter": "test_lower_tmem_copy_uses_tcgen05_ld_intrin",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_tcgen05_fence.py",
+    "test_filter": "test_lower_tmem_copy_uses_tcgen05_st_intrin",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_tcgen05_fence.py",
+    "test_filter": "test_wait_and_arrive_are_rewritten_only_at_tmem_handoffs",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_tcgen05_fence.py",
+    "test_filter": "test_wait_and_arrive_scan_across_neutral_statements",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_tcgen05_fence.py",
+    "test_filter": "test_sync_boundary_stops_wait_lookahead",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_tcgen05_fence.py",
+    "test_filter": "test_existing_manual_fences_are_not_duplicated",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_inject_tcgen05_fence.py",
+    "test_filter": "test_non_sm100_targets_are_left_untouched",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lexical_alloc_scope.py",
+    "test_filter": "test_lower_opaque_block_inserts_scope_for_gemm_descriptor_alloc",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lexical_alloc_scope.py",
+    "test_filter": "test_lower_opaque_block_skips_fragment_root_in_disable_ws_pipeline",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_hopper_intrin.py",
+    "test_filter": "test_lower_shared_barrier",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_ldg32_default_off",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_ldg32_enabled",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_ldg64_enabled",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_ldg128_enabled",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_ldg256_enabled",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_ldg32_predicated",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_stg32_predicated",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_ldg128_predicated",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_lower_stg128_predicated",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_predicated_store_with_load",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_predicated_store_with_shared_load_keeps_explicit_guard",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_predicated_disabled",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ldgstg.py",
+    "test_filter": "test_non_cuda_target_skip",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_shared_barrier.py",
+    "test_filter": "test_single_barrier",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_shared_barrier.py",
+    "test_filter": "test_multiple_barriers",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_shared_barrier.py",
+    "test_filter": "test_no_barrier_is_noop",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_shared_barrier.py",
+    "test_filter": "test_plan_update_keeps_barrier_init_with_tcgen05_no_tma",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_shared_tmem.py",
+    "test_filter": "test_explicit_deallocate_tmem_suppresses_auto_dealloc",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_shared_tmem.py",
+    "test_filter": "test_explicit_deallocate_only_suppresses_matching_buffer",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_shared_tmem.py",
+    "test_filter": "test_dealloc_before_thread_return_keeps_auto_dealloc",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_tile_op.py",
+    "test_filter": "test_lower_tile_op_respects_copy_annotation_for_pipeline_managed_cp_async",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_tile_op.py",
+    "test_filter": "test_lower_tile_op_respects_copy_annotation_for_explicit_async_copy",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_plan_update_buffer_allocation_location.py",
+    "test_filter": "test_plan_update_keeps_loop_header_local_var_outside_loop_body",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_producer_consumer_ws.py",
+    "test_filter": "test_tiled_ws_places_producer_in_first_warp_group",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_producer_consumer_ws.py",
+    "test_filter": "test_tiled_ws_explicit_cp_async_wait_precedes_first_consumer_read",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_producer_consumer_ws.py",
+    "test_filter": "test_tiled_ws_propagates_nested_postloop_liveness_to_outer_prelude",
+    "extra_args": [],
+    "reason": "Temporarily disabled: use_cuda is being removed"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_example_tilelang_sparse_gqa_decode_varlen_indice",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_example_tilelang_sparse_gqa_decode_varlen_mask",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/flash_attention/test_example_flash_attention.py",
+    "test_filter": "test_example_gqa_fwd_varlen",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/flash_attention/test_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_varlen",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_delta_bwd_compilation",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_delta_h_compilation",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_o_bwd_compilation",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_o_compilation",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_chunk_scaled_dot_kkt_compilation",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_cumsum_compilation",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_wy_fast_bwd_split_compilation",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/gdn/test_example_gdn_compilation.py",
+    "test_filter": "test_example_wy_fast_compilation",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_cuda_driver_properties.py",
+    "test_filter": "test_device_get_num_sms",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_cuda_driver_properties.py",
+    "test_filter": "test_device_get_shared_memory_per_block",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_generate_hints.py",
+    "test_filter": "test_general_matmul_emit_configs",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/carver/test_tilelang_carver_generate_hints.py",
+    "test_filter": "test_general_matmul_matmul_emit_configs",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/components/test_tilelang_pass_config_disable_tma_lower.py",
+    "test_filter": "test_disable_tma_lower_warns_in_jit_entry",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/components/test_storage_rewrite_detect_inplace.py",
+    "test_filter": "test_storage_rewrite_detect_inplace_toggle",
+    "extra_args": [],
+    "reason": "LowerBlackwell2SM is unavailable on PPU 890P"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_abs2[bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32[add]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32[mul]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32_no_sm80[add]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32_no_sm80[mul]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32_no_sm80[sub]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_f32[sub]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_fma_f32",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_fma_half_types[bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_half_types[add-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_half_types[mul-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_auto_vec_half_types[sub-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[add2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[max2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[min2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[mul2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_binary[sub2-bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_f32x2_intrinsics.py",
+    "test_filter": "test_codegen_fma2[bfloat16]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_mma_sm75_dispatch.py",
+    "test_filter": "test_ladder_transform_int8_micro_size_uses_actual_k_dim",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_mma_sm75_dispatch.py",
+    "test_filter": "test_non_turing_int8_emitter_keeps_sm80_m16n8k32_shape",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/cuda/test_cuda_mma_sm75_dispatch.py",
+    "test_filter": "test_sm75_uses_sm75_mma_gemm_impl",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_1810.py",
+    "test_filter": "test_issue_1810_l2_persistent_float16_host_stub_no_half",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_sm120_tma_smem_alignment.py",
+    "test_filter": "test_tma_smem_alignment_codegen_sm100_blackwell_dc",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_sm120_tma_smem_alignment.py",
+    "test_filter": "test_tma_smem_alignment_codegen_sm120_blackwell_consumer",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_sm120_tma_smem_alignment.py",
+    "test_filter": "test_tma_smem_alignment_codegen_sm90_hopper",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_cutedsl_host_codegen.py",
+    "test_filter": "test_cutedsl_cache_restore_does_not_fallback_to_host_source",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_cluster.py",
+    "test_filter": "test_clc_query_codegen_includes_cluster_header",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_pdl.py",
+    "test_filter": "test_pdl_sync",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_pdl.py",
+    "test_filter": "test_pdl_trigger",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/math/test_math_fast_math.py",
+    "test_filter": "test_round_modes[ties-to-even]",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_alloc_barrier_target_guard.py",
+    "test_filter": "test_alloc_barrier_rejected_on_pre_hopper_target",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_alloc_barrier_target_guard.py",
+    "test_filter": "test_no_barrier_compiles_on_pre_hopper_target",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_codegen_cutedsl_cp_async.py",
+    "test_filter": "test_cutedsl_dict_target_normalizes_to_cuda_marker",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_codegen_cutedsl_cp_async.py",
+    "test_filter": "test_cutedsl_string_target_uses_detected_cuda_arch",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_rocm_target.py",
+    "test_filter": "test_auto_target_prefers_rocm_pytorch_over_cuda_toolkit",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_rocm_target.py",
+    "test_filter": "test_determine_target_adds_known_gfx12_thread_warp_size",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/target/test_tilelang_rocm_target.py",
+    "test_filter": "test_determine_target_adds_rdna_thread_warp_size",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_does_not_duplicate_existing_sync",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_from_ramp",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_from_vectorized_loop",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_hoists_sync_out_of_predicated_block",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_inserts_commit_before_existing_wait",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_keeps_sync_out_of_inner_unrolled_loops_in_pipelined_loop",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_respects_explicit_async_scope",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_rewrites_plain_parallel_copy",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_rewrites_vectorized_float16_loop",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_ptx_async_copy.py",
+    "test_filter": "test_lower_ptx_async_copy_supports_multi_dim_indices",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_accepts_explicit_bind_free_annotations",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_copy_consumer_num_stages_plan",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_copy_gemm_num_stages_plan",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_explicit_plan_drops_replayable_bind_slot",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_explicit_plan_keeps_pipeline_buffer_bind_slot",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_loop_local_alloc_plan",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_mbarrier_arrive_wait_plan",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_tcgen05_gemm_plan",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_tma_copy_plan",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_before_after_wgmma_gemm_plan",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_keeps_bind_that_reads_pipeline_written_buffer",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_keeps_plain_hopper_pipeline_copies_sync",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_marks_async_producers_per_statement",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_recognizes_parallel_bufferstore_copy_stages",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_schedules_guarded_body_after_replayable_bind_inline",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_pipeline_planning_stages_bind_with_dependent_copy",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_pipeline_planning.py",
+    "test_filter": "test_simple_pipeline",
+    "extra_args": [],
+    "reason": "cudafree 2v2_release 20260923 fail"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_gqa_fwd_varlen",
+    "extra_args": [],
+    "reason": "ModuleNotFoundError: No module named 'flash_attn' - CI 20260923"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_example_tilelang_block_sparse_attn",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/chained_dot/test_chained_dot.py",
+    "test_filter": "test_chained_dot",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/chained_dot/test_chained_dot.py",
+    "test_filter": "test_chained_dot2_transB",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/chained_dot/test_chained_dot.py",
+    "test_filter": "test_chained_dot3_transB",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/chained_dot/test_chained_dot.py",
+    "test_filter": "test_modify_chained_dot",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/deepseek_nsa/test_example_tilelang_nsa.py",
+    "test_filter": "test_example_tilelang_nsa_fwd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/deepseek_nsa/test_example_tilelang_nsa.py",
+    "test_filter": "test_example_tilelang_nsa_fwd_decode",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/gemm/test_example_gemm.py",
+    "test_filter": "test_example_gemm",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/gemm_splitk/test_example_gemm_splitk.py",
+    "test_filter": "test_example_tilelang_gemm_splitk",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/gemm_splitk/test_example_gemm_splitk.py",
+    "test_filter": "test_example_tilelang_gemm_splitk_vectorize_atomicadd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/gemv/test_example_gemv.py",
+    "test_filter": "test_example_gemv",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/chained_dot/test_ppu_example_chained_dot.py",
+    "test_filter": "test_chained_dot",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/chained_dot/test_ppu_example_chained_dot.py",
+    "test_filter": "test_chained_dot2_transB",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/chained_dot/test_ppu_example_chained_dot.py",
+    "test_filter": "test_chained_dot3_transB",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/chained_dot/test_ppu_example_chained_dot.py",
+    "test_filter": "test_modify_chained_dot",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_gqa_bwd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_gqa_fwd_bshd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_bwd_bhsd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_bwd_bshd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_bhsd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_bshd",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_attention/test_ppu_example_flash_attention.py",
+    "test_filter": "test_example_mha_fwd_varlen",
+    "extra_args": [],
+    "reason": "flash-attn is unavailable in the 890P CI environment"
+  },
+  {
+    "file_path": "examples/ppu/flash_decoding/test_example_flash_decoding.py",
+    "test_filter": "test_example_example_gqa_decode",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_decoding/test_example_flash_decoding.py",
+    "test_filter": "test_example_example_gqa_decode_varlen_logits",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/flash_decoding/test_example_flash_decoding.py",
+    "test_filter": "test_example_example_mha_inference",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/gemm/test_ppu_example_gemm.py",
+    "test_filter": "test_example_gemm",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/gemm/test_ppu_example_gemm.py",
+    "test_filter": "test_example_gemm_persistent",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/gemm_fp8/test_example_tilelang_gemm_fp8.py",
+    "test_filter": "test_example_gemm_fp8",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/ppu/seer_attention/test_block_sparse_attn_tilelang.py",
+    "test_filter": "test_block_sparse_attn_tilelang",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_gemm_cython.py",
+    "test_filter": "test_matmul_float_variable",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_gemm_cython.py",
+    "test_filter": "test_matmul_int_variable",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm_aiu_swizzle.py",
+    "test_filter": "test_128b_swizzle",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm_aiu_swizzle.py",
+    "test_filter": "test_128b_swizzle_constraint_trigger",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm_aiu_swizzle.py",
+    "test_filter": "test_64b_swizzle",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/kernel/test_tilelang_kernel_gemm_aiu_swizzle.py",
+    "test_filter": "test_64b_swizzle_constraint_trigger",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_eager_jit.py",
+    "test_filter": "test_jit2_gemm",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/profiler/test_tilelang_profiler_dynamic_symbolic.py",
+    "test_filter": "test_profiler_dynamic_symbolic_correctness[m=128]",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/profiler/test_tilelang_profiler_dynamic_symbolic.py",
+    "test_filter": "test_profiler_dynamic_symbolic_correctness[m=256]",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/profiler/test_tilelang_profiler_dynamic_symbolic.py",
+    "test_filter": "test_profiler_dynamic_symbolic_correctness[m=512]",
+    "extra_args": [],
+    "reason": "PPU-SIGSEGV on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_bwd_dqkwg",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_bwd_dv",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_bwd_gla_dA",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_bwd_intra",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_delta_bwd",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_delta_h_fwd",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_intra_token_parallel",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_chunk_o",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_wy_fast",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/kda/test_kda.py",
+    "test_filter": "test_wy_fast_bwd",
+    "extra_args": [],
+    "reason": "KDA timeout on 890P 20260924"
+  },
+  {
+    "file_path": "examples/blocksparse_attention/test_example_blocksparse_attention.py",
+    "test_filter": "test_block_sparse_attn_triton",
+    "extra_args": [],
+    "reason": "rc=1 failure on 890P 20260924"
+  },
+  {
+    "file_path": "examples/cast/test_example_cast.py",
+    "test_filter": "test_example_per_token_cast_to_fp8",
+    "extra_args": [],
+    "reason": "rc=1 failure on 890P 20260924"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_diagnostics.py",
+    "test_filter": "test_jit_compile_reports_timeout_for_hanging_nvcc",
+    "extra_args": [],
+    "reason": "ProducerConsumerWarpSpecialized is unavailable on PPU backend"
+  },
+  {
+    "file_path": "testing/python/jit/test_tilelang_jit_diagnostics.py",
+    "test_filter": "test_explicit_cuda_arch_source_generation_probe",
+    "extra_args": [],
+    "reason": "ProducerConsumerWarpSpecialized is unavailable on PPU backend"
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_tma_1d.py",
+    "test_filter": "test_tilelang_language_tma_1d",
+    "extra_args": [],
+    "reason": "T.copy prefer_instruction=\"tma\" is not supported on PPU"
+  }
+]

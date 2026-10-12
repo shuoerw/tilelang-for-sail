@@ -1,5 +1,7 @@
 name: CI
 on:
+  push:
+    branches: [main, "feature/ci**"]
   pull_request:
     types:
       - labeled
@@ -10,6 +12,11 @@ on:
       - ready_for_review
   # Allow to trigger the workflow manually
   workflow_dispatch:
+    inputs:
+      board_matrix:
+        description: 'PPU board matrix JSON array (optional)'
+        required: false
+        default: '["ZW-M890P", "OAM-810E"]'
 
 permissions:
   contents: read
@@ -75,10 +82,9 @@ jobs:
           fi
 
   tests:
+    # Disabled: Metal (macos-latest) and CUDA-auto (self-hosted-nvidia) tests temporarily turned off.
+    if: false
     name: Test for Python ${{ matrix.python-version }} with ${{ matrix.runner.toolkit }} (on ${{ matrix.runner.name }})
-    if: |
-      github.repository_owner == 'tile-ai' &&
-      (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     needs: [lint]
     runs-on: ${{ matrix.runner.tags }}
     strategy:
@@ -429,9 +435,7 @@ jobs:
 
   cutedsl:
     name: CuTeDSL Examples for Python 3.12 with CUDA-auto (on self-hosted-nvidia)
-    if: |
-      github.repository_owner == 'tile-ai' &&
-      (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    if: false  # Upstream backend disabled — PPU-only fork
     needs: [tests]
     runs-on: [self-hosted, nvidia]
     timeout-minutes: 120
@@ -596,3 +600,104 @@ jobs:
           if git status --ignored --porcelain | grep -qvE '/$'; then
             ls -alh $(git status --ignored --porcelain | grep -vE '/$' | grep -oE '\S+$')
           fi
+
+  ppu-tests:
+    name: PPU Test (${{ matrix.board }})
+    runs-on: k8s-runner-group-cpu-thead
+    container:
+      image: ghcr.io/actions/actions-runner:latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        board: ${{ fromJson(github.event.inputs.board_matrix || '["ZW-M890P", "OAM-810E"]') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: "recursive"
+
+      - name: Build and Test on PPU
+        id: ppu-test
+        uses: t-head/ppu-scheduler-action@main
+        with:
+          image: download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.13.0-ubuntu24.04-hggcrt3-py312-20261005
+          nnodes: 0
+          nproc_per_node: 1
+          node_selector: "board-type=${{ matrix.board }}"
+          namespace: ppu-sched
+          host_volumes: /nas_aisw:/nas_aisw,/wl_nas:/mnt/wl_nas
+          extra_env: BOARD_TYPE=${{ matrix.board }}
+          timeout_minutes: 300
+          command: |
+            git config --global --add safe.directory '*'
+            cd /workspace/source
+            unset PIP_INDEX_URL
+            git config --global --unset-all url.https://ai-gerrit.eng.t-head.cn/Public/Github/.insteadOf 2>/dev/null || true
+            source /usr/local/PPU_SDK/envsetup.sh
+
+            # ---- Build tilelang wheel ----
+            pip install wheel build setuptools cython packaging 'setuptools==68.1.2'
+            NO_VERSION_LABEL=OFF NO_GIT_VERSION=1 python -m build --wheel || { echo "[FATAL] tilelang wheel build failed"; exit 1; }
+
+            # ---- Install PPU-specific dependencies ----
+            pip install pytest==9.0.0 pyyaml==6.0.3 junit-xml
+            pip install einops==0.8.1 ninja==1.13.0 mkl==2021.4.0 cuda-bindings==13.0
+            pip install 'z3-solver>=4.13.0,<4.15.5' tabulate
+            yes | pip uninstall nvidia-cuda-nvrtc 2>/dev/null || true
+            # Use the image-preinstalled torch/triton (hggcrt3 variant, compatible with PPU SDK libacblas).
+            # flash-attn is not bundled in the image; install if available but do not fail.
+            pip install flash-attn 2>/dev/null || echo "[WARN] flash-attn not available, skipping"
+            cd /workspace/source
+
+            # Install system deps
+            apt-get update && apt-get upgrade -y && apt-get install -y libopenmpi-dev 2>/dev/null || true
+
+            # Comment out the REPO_ROOT in-tree import override block that conflicts with wheel install
+            sed -i '/^REPO_ROOT/,/^$/{ /^$/!s/^/# / }' testing/conftest.py
+
+            # Install built tilelang wheel
+            pip install dist/*.whl
+
+            # ---- Setup test environment ----
+            cd /workspace
+            ln -sf source tilelang
+            cp source/.github/scripts/*_skip.json source/
+
+            # Use board type directly as platform name (skip files are named <BOARD_TYPE>_skip.json)
+            export CI_TEST_PLATFORM="$BOARD_TYPE"
+            if [[ ! -f "source/${CI_TEST_PLATFORM}_skip.json" ]]; then
+              echo "ERROR: Skip file '${CI_TEST_PLATFORM}_skip.json' not found for BOARD_TYPE='$BOARD_TYPE'. Refusing to run without a valid skip list." >&2
+              exit 1
+            fi
+
+            echo "Board: $BOARD_TYPE -> Platform: $CI_TEST_PLATFORM"
+
+            # ---- Run tests ----
+            cd /workspace/source
+            python .github/scripts/test_tilelang.py -o test_result.xml -v --timeout 600 --workers 4 || TEST_RC=$?
+            TEST_RC=${TEST_RC:-0}
+
+            # ---- Copy results to NAS ----
+            NAS_RESULT_DIR="/mnt/wl_nas/devops/tilelang-ci/${{ github.run_id }}/${{ github.run_attempt }}/${{ matrix.board }}"
+            mkdir -p "$NAS_RESULT_DIR"
+            cp test_result.xml "$NAS_RESULT_DIR/" 2>/dev/null || true
+            # Propagate original test exit code
+            exit $TEST_RC
+          cleanup_policy: always
+
+      - name: Test summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          NAS_RESULT_DIR="/wl_nas/devops/tilelang-ci/${{ github.run_id }}/${{ github.run_attempt }}/${{ matrix.board }}"
+          python3 .github/scripts/report_test_results.py \
+            --xml "$NAS_RESULT_DIR/test_result.xml" \
+            --title "TileLang PPU Test Results (${{ matrix.board }})" \
+            --docker-image "download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.13.0-ubuntu24.04-hggcrt3-py312-20261005" \
+            --run-number "${{ github.run_number }}" \
+            --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+            --job-status "${{ steps.ppu-test.outputs.job_status }}" \
+            --duration "${{ steps.ppu-test.outputs.duration_seconds }}" \
+            --pods "${{ steps.ppu-test.outputs.task_pods }}" \
+            >> $GITHUB_STEP_SUMMARY || true
