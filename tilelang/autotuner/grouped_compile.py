@@ -27,7 +27,7 @@ def compile_grouped_unit_tvm_ffi(
     compile_args: CompileArgs,
     elaborate_func: Callable[..., PrimFunc],
 ) -> list[CompileUnitResult]:
-    """Compile one grouped unit for CUDA+tvm_ffi backend.
+    """Compile one grouped unit for tvm_ffi backends (CUDA, PPU).
 
     Flow:
     1. Elaborate each config into a PrimFunc.

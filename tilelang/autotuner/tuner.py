@@ -53,6 +53,10 @@ _RESERVED_CONFIG_KEYS = frozenset({"pass_configs"})
 # Internal key used to pass per-config pass_configs through config_arg dicts
 _PASS_CONFIGS_KEY = "__pass_configs__"
 
+# Target kinds whose devices can host parallel benchmark workers (their torch
+# compatibility layers expose torch.cuda device management APIs).
+_MULTI_DEVICE_TARGET_KINDS = ("cuda", "ppu")
+
 
 class TimeoutException(Exception):
     pass
@@ -540,11 +544,11 @@ class AutoTuner:
         target_kind = self.compile_args.target.kind.name if isinstance(self.compile_args.target, Target) else str(self.compile_args.target)
         execution_backend = str(self.compile_args.execution_backend)
         grouped_compile_requested = enable_grouped_compile and group_compile_size > 1
-        grouped_compile_active = grouped_compile_requested and target_kind == "cuda" and execution_backend == "tvm_ffi"
+        grouped_compile_active = grouped_compile_requested and target_kind in ("cuda", "ppu") and execution_backend == "tvm_ffi"
         grouped_compile_reason = ""
         if grouped_compile_requested and not grouped_compile_active:
             grouped_compile_reason = (
-                f"grouped compilation is currently implemented for CUDA+tvm_ffi only; "
+                f"grouped compilation is currently implemented for CUDA/PPU+tvm_ffi only; "
                 f"fallback to per-config mode (target={target_kind}, execution_backend={execution_backend})"
             )
             logger.warning("%s", grouped_compile_reason)
@@ -666,14 +670,15 @@ class AutoTuner:
         timeout: int,
         worker_state: _BenchmarkWorkerState,
     ) -> None:
-        if target_kind == "cuda":
+        if target_kind in _MULTI_DEVICE_TARGET_KINDS:
             try:
                 torch.cuda.set_device(worker_device)
+                logger.info("Benchmark worker bound to device %d", worker_device)
             except Exception:
-                logger.warning("Failed to bind benchmark worker to cuda:%s", worker_device)
+                logger.warning("Failed to bind benchmark worker to device %s", worker_device)
                 logger.debug("Error: %s", traceback.format_exc())
 
-        benchmark_device = worker_device if torch.cuda.is_available() and target_kind == "cuda" else None
+        benchmark_device = worker_device if torch.cuda.is_available() and target_kind in _MULTI_DEVICE_TARGET_KINDS else None
 
         def _call_benchmark_target(
             jit_kernel: tilelang.JITKernel,
@@ -846,6 +851,7 @@ class AutoTuner:
             n_repeat=rep,
             input_tensors=jit_input_tensors_cache,
             backend=backend,
+            device=benchmark_device,
             early_stop_baseline=(self._early_stop_best_latency * self._early_stop_factor if self._early_stop_enabled else None),
         )
 
@@ -878,9 +884,9 @@ class AutoTuner:
         if not benchmark_multi_gpu:
             return False, single_device
 
-        if target_kind != "cuda":
+        if target_kind not in _MULTI_DEVICE_TARGET_KINDS:
             logger.warning(
-                "Multi-GPU benchmark requested but target is '%s'. Falling back to single-device benchmark on cuda:%s.",
+                "Multi-device benchmark requested but target is '%s'. Falling back to single-device benchmark on device %s.",
                 target_kind,
                 current_device,
             )
@@ -953,8 +959,8 @@ class AutoTuner:
             use_pipeline: Whether to pipeline benchmarking with compilation.
             enable_grouped_compile: Whether to enable grouped compilation.
             group_compile_size: Number of configurations in one compile unit.
-            benchmark_devices: CUDA device ordinals used for benchmark workers when benchmark_multi_gpu=True.
-            benchmark_multi_gpu: Whether to benchmark configurations across multiple CUDA GPUs.
+            benchmark_devices: Device ordinals used for benchmark workers when benchmark_multi_gpu=True.
+            benchmark_multi_gpu: Whether to benchmark configurations across multiple devices.
             early_stop: Whether to skip full benchmark when estimate exceeds best * early_stop_factor.
             early_stop_factor: Multiplier for best latency to compute early stop threshold.
 
