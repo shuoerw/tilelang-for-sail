@@ -587,8 +587,8 @@ def test_uniform_rewrite_preserves_every_lane(shift, boundary, comparison, base_
     def condition(tx):
         base = {
             "thread": tx,
-            "modulo": FloorMod(tx, 256),
-            "mask": tirx.bitwise_and(tx, 255),
+            "modulo": FloorMod(tx, 128),
+            "mask": tirx.bitwise_and(tx, 127),
             "aligned_offset": tx - 32,
         }[base_kind]
         return comparison(FloorDiv(base, 1 << shift), IntImm("int32", boundary >> shift))
