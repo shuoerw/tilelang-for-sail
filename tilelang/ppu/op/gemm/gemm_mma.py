@@ -8,11 +8,37 @@ from tilelang.ppu.intrinsics.macro.mma_macro_generator import (
 from tilelang.utils.language import is_shared, is_fragment, is_full_region
 from tvm.target import Target
 from tvm.ir import Range
-from tvm import tirx, DataType
+from tvm import arith, tirx, DataType
 from tilelang import language as T
 from tilelang.transform.simplify import _Simplify
 
 GEMM_INST_MMA_PPU = "ppu.mma"
+
+
+def _can_load_scale_fragment(region: tirx.BufferRegion, layout_map: dict, k_tiles: int) -> bool:
+    """Prove that each b16 matrix-load row is contiguous and 16-byte aligned."""
+    buffer = region.buffer
+    if not is_shared(buffer) or buffer.data_alignment % 16 != 0 or buffer.data_alignment < 16:
+        return False
+    # An explicit layout may change both physical adjacency and row alignment.
+    if layout_map.get(buffer) is not None:
+        return False
+
+    strides = list(buffer.strides)
+    if not strides:
+        stride = tirx.IntImm("int32", 1)
+        for extent in reversed(buffer.shape):
+            strides.insert(0, stride)
+            stride = stride * extent
+
+    analyzer = arith.Analyzer()
+    if not analyzer.can_prove(strides[-1] == 1):
+        return False
+    offset = buffer.elem_offset + sum(axis.min * stride for axis, stride in zip(region.region, strides))
+    # Scale elements are uint16; each lane supplies eight adjacent elements.
+    if not analyzer.can_prove(tirx.floormod(offset, 8) == 0):
+        return False
+    return k_tiles == 1 or analyzer.can_prove(tirx.floormod(strides[-2], 8) == 0)
 
 
 class PPUGemmMMA(GemmBase):
@@ -214,6 +240,18 @@ class PPUGemmMMA(GemmBase):
 
         assert is_full_region(C_region), "Fragment output C must be a full region"
 
+        sfa_local_size = (warp_rows + 3) // 4
+        sfb_local_size = (warp_cols + 3) // 4
+        use_scale_fragments = (
+            self.is_blockscaled
+            and (warp_rows in (1, 2) or warp_rows % 4 == 0)
+            and (warp_cols in (1, 2) or warp_cols % 4 == 0)
+            and int(self.M) % 64 == 0
+            and int(self.N) % 64 == 0
+            and _can_load_scale_fragment(scale_A_region, layout_map, scale_k_tiles)
+            and _can_load_scale_fragment(scale_B_region, layout_map, scale_k_tiles)
+        )
+
         if self.is_gemm_ss():
 
             @T.prim_func
@@ -225,9 +263,16 @@ class PPUGemmMMA(GemmBase):
                 """
                 A_local = T.alloc_local((warp_rows * local_size_a), a_dtype)
                 B_local = T.alloc_local((warp_cols * local_size_b), b_dtype)
+                if use_scale_fragments:
+                    SFA_local = T.alloc_local((sfa_local_size,), T.uint32)
+                    SFB_local = T.alloc_local((sfb_local_size,), T.uint32)
                 if clear_accum:
                     T.clear(C_buf)
                 for ki in T.serial(0, (block_K // micro_size_k)):
+                    if use_scale_fragments:
+                        mma_emitter.load_scale(SFA_local, scale_A_region, ki, operand="A")
+                        mma_emitter.load_scale(SFB_local, scale_B_region, ki, operand="B")
+
                     # Load A into fragment
                     mma_emitter.ldmatrix_a(
                         A_local,
@@ -243,7 +288,17 @@ class PPUGemmMMA(GemmBase):
                     )
 
                     # Perform Matrix Multiplication
-                    mma_emitter.mma(A_local, B_local, C_buf, ki, scale_A_region, scale_B_region)
+                    if use_scale_fragments:
+                        mma_emitter.mma_blockscaled(
+                            A_local,
+                            B_local,
+                            C_buf,
+                            SFA_local,
+                            SFB_local,
+                            ki,
+                        )
+                    else:
+                        mma_emitter.mma(A_local, B_local, C_buf, ki, scale_A_region, scale_B_region)
 
             # Simplify to optimize the index computing
             # Must inline let statements to simplify the analysis
@@ -259,10 +314,17 @@ class PPUGemmMMA(GemmBase):
                 accumulating into C_local.
                 """
                 A_local = T.alloc_local((warp_rows * local_size_a), a_dtype)
+                if use_scale_fragments:
+                    SFA_local = T.alloc_local((sfa_local_size,), T.uint32)
+                    SFB_local = T.alloc_local((sfb_local_size,), T.uint32)
 
                 if clear_accum:
                     T.clear(C_buf)
                 for ki in T.serial(0, (block_K // micro_size_k)):
+                    if use_scale_fragments:
+                        mma_emitter.load_scale(SFA_local, scale_A_region, ki, operand="A")
+                        mma_emitter.load_scale(SFB_local, scale_B_region, ki, operand="B")
+
                     # Load A into fragment
                     mma_emitter.ldmatrix_a(
                         A_local,
@@ -271,7 +333,17 @@ class PPUGemmMMA(GemmBase):
                     )
 
                     # Perform Matrix Multiplication
-                    mma_emitter.mma(A_local, B_buf, C_buf, ki, scale_A_region, scale_B_region)
+                    if use_scale_fragments:
+                        mma_emitter.mma_blockscaled(
+                            A_local,
+                            B_buf,
+                            C_buf,
+                            SFA_local,
+                            SFB_local,
+                            ki,
+                        )
+                    else:
+                        mma_emitter.mma(A_local, B_buf, C_buf, ki, scale_A_region, scale_B_region)
 
             # Simplify to optimize the index computing
             # Must inline let statements to simplify the analysis
@@ -293,9 +365,16 @@ class PPUGemmMMA(GemmBase):
                 accumulating into C_local.
                 """
                 B_local = T.alloc_local((warp_cols * local_size_b), b_dtype)
+                if use_scale_fragments:
+                    SFA_local = T.alloc_local((sfa_local_size,), T.uint32)
+                    SFB_local = T.alloc_local((sfb_local_size,), T.uint32)
                 if clear_accum:
                     T.clear(C_buf)
                 for ki in T.serial(0, (block_K // micro_size_k)):
+                    if use_scale_fragments:
+                        mma_emitter.load_scale(SFA_local, scale_A_region, ki, operand="A")
+                        mma_emitter.load_scale(SFB_local, scale_B_region, ki, operand="B")
+
                     # Load B into fragment
                     mma_emitter.ldmatrix_b(
                         B_local,
@@ -305,7 +384,17 @@ class PPUGemmMMA(GemmBase):
                     )
 
                     # Perform Matrix Multiplication
-                    mma_emitter.mma(A_buf, B_local, C_buf, ki, scale_A_region, scale_B_region)
+                    if use_scale_fragments:
+                        mma_emitter.mma_blockscaled(
+                            A_buf,
+                            B_local,
+                            C_buf,
+                            SFA_local,
+                            SFB_local,
+                            ki,
+                        )
+                    else:
+                        mma_emitter.mma(A_buf, B_local, C_buf, ki, scale_A_region, scale_B_region)
 
             # Simplify to optimize the index computing
             # Must inline let statements to simplify the analysis
@@ -322,11 +411,28 @@ class PPUGemmMMA(GemmBase):
                 accumulating into C_local.
                 """
 
+                if use_scale_fragments:
+                    SFA_local = T.alloc_local((sfa_local_size,), T.uint32)
+                    SFB_local = T.alloc_local((sfb_local_size,), T.uint32)
                 if clear_accum:
                     T.clear(C_buf)
                 for ki in T.serial(0, (block_K // micro_size_k)):
+                    if use_scale_fragments:
+                        mma_emitter.load_scale(SFA_local, scale_A_region, ki, operand="A")
+                        mma_emitter.load_scale(SFB_local, scale_B_region, ki, operand="B")
+
                     # Perform Matrix Multiplication
-                    mma_emitter.mma(A_buf, B_buf, C_buf, ki, scale_A_region, scale_B_region)
+                    if use_scale_fragments:
+                        mma_emitter.mma_blockscaled(
+                            A_buf,
+                            B_buf,
+                            C_buf,
+                            SFA_local,
+                            SFB_local,
+                            ki,
+                        )
+                    else:
+                        mma_emitter.mma(A_buf, B_buf, C_buf, ki, scale_A_region, scale_B_region)
 
             # Simplify to optimize the index computing
             # Must inline let statements to simplify the analysis

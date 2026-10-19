@@ -7,6 +7,7 @@ from tvm import DataType
 from tvm import tirx
 from tvm.ir import Range
 from tvm.tirx import PrimExpr, IndexMap, Buffer, Var, BufferRegion, BufferLoad
+from tvm.tirx import FloorMod, FloorDiv
 from tilelang import tvm as tvm
 from tvm.runtime import convert
 from ..layout.utils import (
@@ -1278,6 +1279,61 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         """Non-16-bit B loading — delegates to base class (TensorCoreIntrinEmitter) ldmatrix_b."""
         return TensorCoreIntrinEmitter.ldmatrix_b(self, B_local_buf, B_shared_buf, ki, rk)
 
+    def load_scale(
+        self,
+        scale_local_buf: Buffer,
+        scale_shared_buf: Buffer | BufferRegion,
+        k64_idx: PrimExpr,
+        operand: Literal["A", "B"],
+    ):
+        """Load packed E8M0 scales for A rows or B columns into registers.
+
+        Each 64-element uint16 segment is loaded as an 8x8 b16 matrix.
+        Each lane receives four E8M0 bytes in one uint32 register, covering
+        four MMA atoms across the warp. Source rows must be contiguous and
+        16-byte aligned in shared memory.
+        """
+        if operand not in ("A", "B"):
+            raise ValueError(f"Expected scale operand A or B, got {operand!r}")
+        warp_atoms = self.warp_rows if operand == "A" else self.warp_cols
+        scale_regs = (warp_atoms + 3) // 4
+        thread_binding = self.get_thread_binding()
+        scale_region = self._legalize_to_buffer_region(scale_shared_buf)
+        scale_buf = scale_region.buffer
+        scale_bases = [r.min for r in scale_region.region]
+        num_leading = max(len(scale_bases) - 2, 0)
+
+        @T.macro
+        def _load_scale(scale_local_buf, k64_idx, thread_binding):
+            tx, warp_n, warp_m = self.extract_thread_binding(thread_binding)
+            warp = warp_m if operand == "A" else warp_n
+            # x1 takes row addresses from lanes 0-7; repeat valid rows in other lanes.
+            lane = FloorMod(tx, 8)
+            for scale_i in T.serial(scale_regs):
+                base_band = warp * warp_atoms
+                segment = FloorDiv(base_band, 4) + scale_i
+                if warp_atoms % 4 == 0:
+                    col = segment * 64 + lane * 8
+                else:
+                    phase = FloorMod(base_band, 4)
+                    effective_lane = lane ^ (phase * 2)
+                    col = segment * 64 + effective_lane * 8
+                if len(scale_bases) == 1:
+                    idx = (scale_bases[0] + col,)
+                else:
+                    idx = tuple(scale_bases[:num_leading]) + (
+                        scale_bases[num_leading] + k64_idx,
+                        scale_bases[num_leading + 1] + col,
+                    )
+                T.ptx_ldmatrix(
+                    T.bool(True),
+                    1,
+                    T.access_ptr(scale_buf[idx], "r", extent=8),
+                    T.access_ptr(scale_local_buf[scale_i], "w", extent=1),
+                )
+
+        return _load_scale(scale_local_buf, k64_idx, thread_binding)
+
     def mma(
         self,
         A_local_buf: Buffer,
@@ -1309,6 +1365,119 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
                 )
 
         return _warp_mma(A_local_buf, B_local_buf, C_local_buf)
+
+    def mma_blockscaled(
+        self,
+        A_local_buf: Buffer,
+        B_local_buf: Buffer,
+        C_local_buf: Buffer,
+        SFA_local_buf: Buffer,
+        SFB_local_buf: Buffer,
+        k_inner: PrimExpr | None = 0,
+    ):
+        """Issue MXFP4 MMA atoms from preloaded scale packs."""
+        warp_rows = self.warp_rows
+        warp_cols = self.warp_cols
+
+        @T.macro
+        def _warp_mma_blockscaled(
+            A_local_buf,
+            B_local_buf,
+            C_local_buf,
+            SFA_local_buf,
+            SFB_local_buf,
+        ):
+            for i, j in T.grid(warp_rows, warp_cols):
+                self.mma_atom_blockscaled(
+                    A_local_buf,
+                    B_local_buf,
+                    C_local_buf,
+                    SFA_local_buf,
+                    SFB_local_buf,
+                    i,
+                    j,
+                    k_inner,
+                )
+
+        return _warp_mma_blockscaled(
+            A_local_buf,
+            B_local_buf,
+            C_local_buf,
+            SFA_local_buf,
+            SFB_local_buf,
+        )
+
+    def mma_atom_blockscaled(
+        self,
+        A_local_buf: Buffer,
+        B_local_buf: Buffer,
+        C_local_buf: Buffer,
+        SFA_local_buf: Buffer,
+        SFB_local_buf: Buffer,
+        inst_m_idx: PrimExpr | int,
+        inst_n_idx: PrimExpr | int,
+        k_inner: PrimExpr | int = 0,
+    ):
+        """Issue one m16n16k64 atom using register-resident scale packs."""
+        warp_rows = self.warp_rows
+        warp_cols = self.warp_cols
+        local_size_a = self.local_size_a
+        local_size_b = self.local_size_b
+        local_size_out = self.local_size_out
+        a_dtype_abbrv = self.a_dtype_abbrv
+        b_dtype_abbrv = self.b_dtype_abbrv
+        accum_dtype = self.accum_dtype
+        accum_dtype_abbrv = self.accum_dtype_abbrv
+        mma_prefix = self.mma_prefix
+
+        a_is_fragment = is_fragment(A_local_buf)
+        b_is_fragment = is_fragment(B_local_buf)
+        a_local_stride: PrimExpr = k_inner * warp_rows * local_size_a if a_is_fragment else 0
+        b_local_stride: PrimExpr = k_inner * warp_cols * local_size_b if b_is_fragment else 0
+        A_offset = a_local_stride + inst_m_idx * local_size_a
+        B_offset = b_local_stride + inst_n_idx * local_size_b
+        C_offset = inst_m_idx * warp_cols * local_size_out + inst_n_idx * local_size_out
+        SFA_offset = inst_m_idx // 4
+        SFB_offset = inst_n_idx // 4
+        psel_a = inst_m_idx % 4
+        psel_b = inst_n_idx % 4
+
+        @T.macro
+        def _atom_mma_blockscaled(
+            A_local_buf,
+            B_local_buf,
+            C_local_buf,
+            SFA_local_buf,
+            SFB_local_buf,
+        ):
+            T.ptx_mma_scaled(
+                accum_dtype,
+                mma_prefix,
+                "row",
+                "col",
+                a_dtype_abbrv,
+                b_dtype_abbrv,
+                accum_dtype_abbrv,
+                A_local_buf.data,
+                A_offset,
+                B_local_buf.data,
+                B_offset,
+                C_local_buf.data,
+                C_offset,
+                T.bool(False),
+                SFA_local_buf[SFA_offset],
+                SFB_local_buf[SFB_offset],
+                psel_a,
+                psel_b,
+            )
+
+        return _atom_mma_blockscaled(
+            A_local_buf,
+            B_local_buf,
+            C_local_buf,
+            SFA_local_buf,
+            SFB_local_buf,
+        )
 
     def mma_atom(
         self,

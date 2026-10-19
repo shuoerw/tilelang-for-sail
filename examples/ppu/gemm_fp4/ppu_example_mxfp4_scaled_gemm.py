@@ -124,6 +124,7 @@ def check_kernel_source(num_stages, block_K=64):
     source = kernel.get_kernel_source()
     assert "#include <tl_templates/ppu/instruction/mma.h>" in source
     assert "tl::mma_sync_scaled<" in source
+    assert "tl::tix_ldmatrix_x1_trans(" in source
     actlize_header = Path(ACTLIZE_INCLUDE_DIR) / "cute/arch/mma_ppu0015.hpp"
     assert actlize_header.exists(), f"actlize header not found: {actlize_header}"
     assert _NATIVE_FP4_MMA in actlize_header.read_text(encoding="utf-8")
