@@ -1,6 +1,6 @@
 import torch
 import tilelang as tl
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.profiler import do_bench
 
 import argparse

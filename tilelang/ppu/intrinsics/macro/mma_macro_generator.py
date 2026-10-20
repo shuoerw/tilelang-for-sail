@@ -1,12 +1,12 @@
 from __future__ import annotations
-import tilelang.language as T
+import tilelang.ppu.language as T
 from typing import Literal
 from collections.abc import Callable
 from tilelang.transform import PassConfigKey, get_pass_context
 from tvm import DataType
 from tvm import tirx
 from tvm.ir import Range
-from tvm.tirx import PrimExpr, IndexMap, Buffer, Var, BufferRegion, BufferLoad
+from tvm.tirx import PrimExpr, IndexMap, Buffer, BufferRegion, BufferLoad
 from tvm.tirx import FloorMod, FloorDiv
 from tilelang import tvm as tvm
 from tvm.runtime import convert
@@ -106,7 +106,7 @@ class TensorCoreIntrinEmitter:
         reduce_k: int = 1,
         num_elems_per_byte: int = 1,
         is_m_first: bool | None = False,
-        thread_var: Var | None = None,
+        thread_index: PrimExpr | None = None,
     ):
         self.a_dtype = a_dtype
         self.b_dtype = b_dtype
@@ -130,7 +130,7 @@ class TensorCoreIntrinEmitter:
         self.reduce_k = reduce_k
         self.threads = self.WARP_SIZE * (block_row_warps * block_col_warps) * reduce_k
         self.num_elems_per_byte = num_elems_per_byte
-        self.thread_var = thread_var
+        self.thread_index = thread_index
 
         if self.warp_rows == 0 or self.warp_cols == 0:
             raise ValueError(
@@ -236,13 +236,13 @@ class TensorCoreIntrinEmitter:
         if is_m_first is not None:
             self.is_m_first = is_m_first
 
-    def get_thread_binding(self):
-        if self.thread_var is None:
+    def get_thread_binding(self) -> PrimExpr:
+        if self.thread_index is None:
             current_frame = T.KernelLaunchFrame.Current()
             assert current_frame is not None, "Must be called in a T.Kernel Frame"
             return current_frame.get_thread_binding()
         else:
-            return self.thread_var
+            return self.thread_index
 
     def _use_fp64_store_index_map(self) -> bool:
         # m8n8 MMA atoms produce two C registers and share the FP64 lane map.

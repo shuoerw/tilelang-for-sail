@@ -1,9 +1,13 @@
 """PPU tests for `LowerTileOp` copy annotations affecting cp.async sync (path 2)."""
 
-import tilelang.language as T
+import pytest
+
+import tilelang.ppu.language as T
 import tilelang.ppu.transform
 import tilelang.testing
 from tilelang import tvm
+from tilelang.ppu.intrinsics.macro.mma_macro_generator import PPUTensorCoreIntrinEmitter
+from tilelang.ppu.intrinsics.macro.mma_sp_macro_generator import PPUSparseTensorCoreIntrinEmitter
 from tvm.tirx.stmt_functor import post_order_visit
 
 
@@ -492,6 +496,149 @@ def test_ppu_pipeline_subword_copy_is_annotated_and_lowered_end_to_end():
         else:
             assert calls.get("tl.ptx_cp_async", 0) == 0, dtype
             assert _shared_sync_stores(mod["main"]), dtype
+
+
+def _vars_of(node):
+    variables = []
+
+    def _visit(obj):
+        if isinstance(obj, tvm.tirx.Var):
+            variables.append(obj)
+
+    post_order_visit(node, _visit)
+    return variables
+
+
+def _parallel_loop_annotations(func):
+    annotations = []
+
+    def _visit(node):
+        if isinstance(node, tvm.tirx.For) and "parallel_loop_layout" in node.annotations:
+            annotations.append(node.annotations)
+
+    post_order_visit(func.body, _visit)
+    return annotations
+
+
+def _assert_no_unexpected_free_vars(func):
+    buffer_data = [buffer.data for buffer in func.buffer_map.values()]
+    unexpected = [
+        var for var in tvm.tirx.analysis.undefined_vars(func.body, func.params) if not any(var.same_as(data) for data in buffer_data)
+    ]
+    assert not unexpected, f"unexpected free variables: {unexpected}"
+
+
+@pytest.mark.parametrize("target_kind", ["c", "ppu"])
+def test_ppu_thread_index_without_binding_has_ground_predicates(target_kind):
+    target = tvm.target.Target("c") if target_kind == "c" else tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+
+    @T.prim_func
+    def before(A: T.Tensor((16,), "int32"), B: T.Tensor((16,), "int32")):
+        T.func_attr({"global_symbol": "main", "target": target})
+        with T.sblock("root"):
+            frag = T.sblock_alloc_buffer((16,), "int32", scope="local.fragment")
+            for i in T.Parallel(16):
+                frag[i] = A[i]
+            for i in T.Parallel(16):
+                B[i] = frag[i]
+
+    with target:
+        inferred = tilelang.ppu.transform.LayoutInference()(tvm.IRModule.from_expr(before))
+        annotations = _parallel_loop_annotations(inferred["main"])
+        assert len(annotations) == 2
+        for annotation in annotations:
+            predicate = annotation.get("parallel_loop_predicate", None)
+            if predicate is not None:
+                assert not _vars_of(predicate), f"predicate must be ground: {predicate}"
+        assert all(str(var.name) != "v_thread" for var in _vars_of(inferred["main"].body))
+        lowered = tilelang.ppu.transform.LowerTileOp()(inferred)["main"]
+
+    assert all(str(var.name) != "v_thread" for var in _vars_of(lowered.body))
+    _assert_no_unexpected_free_vars(lowered)
+
+
+@pytest.mark.parametrize("thread_min, thread_extent", [(0, 128), (32, 32)])
+def test_ppu_thread_index_predicate_uses_real_binding_and_bounds(thread_min, thread_extent):
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+    loop_layout = T.Fragment((8,), forward_thread_fn=lambda i: i, forward_index_fn=lambda i: 0)
+
+    @T.prim_func
+    def before(A: T.Tensor((8,), "int32"), B: T.Tensor((8,), "int32")):
+        T.func_attr({"global_symbol": "main", "target": target})
+        tx = T.launch_thread("threadIdx.x", 128)
+        if tx >= thread_min and tx < thread_min + thread_extent:
+            for i in T.Parallel(8, annotations={"parallel_loop_layout": loop_layout}):
+                B[i] = A[i] + 1
+
+    with target:
+        inferred = tilelang.ppu.transform.LayoutInference()(tvm.IRModule.from_expr(before))
+        thread_vars = []
+
+        def _visit(node):
+            if isinstance(node, tvm.tirx.AttrStmt) and node.attr_key == "thread_extent" and node.node.thread_tag == "threadIdx.x":
+                thread_vars.append(node.node.var)
+
+        post_order_visit(inferred["main"].body, _visit)
+        assert len(thread_vars) == 1
+        annotations = _parallel_loop_annotations(inferred["main"])
+        assert len(annotations) == 1
+        predicate = annotations[0]["parallel_loop_predicate"]
+        predicate_vars = _vars_of(predicate)
+        assert predicate_vars
+        assert all(var.same_as(thread_vars[0]) for var in predicate_vars)
+        analyzer = tvm.arith.Analyzer()
+        for index in (thread_min, thread_min + 7, thread_min + 8, thread_min + thread_extent - 1):
+            value = tvm.tirx.stmt_functor.substitute(predicate, {thread_vars[0]: tvm.tirx.IntImm("int32", index)})
+            assert int(analyzer.simplify(value)) == int(thread_min <= index < thread_min + 8)
+        lowered = tilelang.ppu.transform.LowerTileOp()(inferred)["main"]
+
+    assert all(str(var.name) != "v_thread" for var in _vars_of(lowered.body))
+    _assert_no_unexpected_free_vars(lowered)
+
+
+def test_ppu_thread_index_preserves_legitimate_v_thread_parameter():
+    target = tvm.target.Target("c")
+
+    @T.prim_func
+    def before(v_thread: T.int32, out: T.Tensor((1,), "int32")):
+        T.func_attr({"global_symbol": "main", "target": target})
+        with T.sblock("root"):
+            frag = T.sblock_alloc_buffer((1,), "int32", scope="local.fragment")
+            frag[0] = v_thread
+            out[0] = frag[0]
+
+    original_param = before.params[0]
+    with target:
+        inferred = tilelang.ppu.transform.LayoutInference()(tvm.IRModule.from_expr(before))
+        lowered = tilelang.ppu.transform.LowerTileOp()(inferred)["main"]
+
+    assert lowered.params[0].same_as(original_param)
+    references = [var for var in _vars_of(lowered.body) if str(var.name) == "v_thread"]
+    assert references
+    assert all(var.same_as(original_param) for var in references)
+    _assert_no_unexpected_free_vars(lowered)
+
+
+@pytest.mark.parametrize("emitter_cls", [PPUTensorCoreIntrinEmitter, PPUSparseTensorCoreIntrinEmitter])
+@pytest.mark.parametrize("index_kind", ["zero", "var", "nonzero_bounds"])
+def test_ppu_mma_emitter_accepts_primexpr_thread_index(emitter_cls, index_kind):
+    tx = tvm.tirx.Var("tx", "int32")
+    thread_index = tvm.tirx.IntImm("int32", 0) if index_kind == "zero" else tx
+    if index_kind == "nonzero_bounds":
+        thread_index = tx - 32
+    kwargs = {"ppu_arch": 15} if emitter_cls is PPUTensorCoreIntrinEmitter else {}
+    emitter = emitter_cls(warp_row_tiles=16, warp_col_tiles=16, thread_index=thread_index, **kwargs)
+    assert emitter.get_thread_binding().same_as(thread_index)
+    lane, warp_n, warp_m = emitter.extract_thread_binding(emitter.get_thread_binding())
+    analyzer = tvm.arith.Analyzer()
+    for local_index in (0, 31, 32, 63, 64, 127):
+        index = local_index + 32 if index_kind == "nonzero_bounds" else local_index
+        actual = [
+            int(analyzer.simplify(tvm.tirx.stmt_functor.substitute(expr, {tx: tvm.tirx.IntImm("int32", index)})))
+            for expr in (lane, warp_n, warp_m)
+        ]
+        expected_index = 0 if index_kind == "zero" else local_index
+        assert actual == [expected_index % 32, (expected_index // 64) % 2, (expected_index // 32) % 2]
 
 
 if __name__ == "__main__":

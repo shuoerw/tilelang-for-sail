@@ -48,7 +48,7 @@ class PPUGemmMMA(GemmBase):
     def allow_f8f6f4_mixed_dtypes(self) -> bool:
         return True
 
-    def _make_mma_emitter(self, target: Target, thread_nums: int, thread_var: tirx.Var | None = None):
+    def _make_mma_emitter(self, target: Target, thread_nums: int, thread_index: tirx.PrimExpr | None = None):
         m_warp, n_warp = self.policy.compute_warp_partition(self.M, self.N, thread_nums, target, GEMM_INST_MMA_PPU)
         warp_row_tiles = int(self.M // m_warp)
         warp_col_tiles = int(self.N // n_warp)
@@ -63,7 +63,7 @@ class PPUGemmMMA(GemmBase):
             warp_row_tiles=warp_row_tiles,
             warp_col_tiles=warp_col_tiles,
             chunk=self.chunk,
-            thread_var=thread_var,
+            thread_index=thread_index,
         )
         arch = str(target.attrs["arch"]) if target and "arch" in target.attrs else "ppu_10"
         try:
@@ -170,12 +170,12 @@ class PPUGemmMMA(GemmBase):
         layout_map: dict,
         target: Target,
         thread_bounds: Range,
-        thread_var: tirx.Var,
+        thread_index: tirx.PrimExpr,
         mbar_phase_expr: tirx.PrimExpr | None = None,
     ):
         thread_nums = thread_bounds.extent
         # Emitter lane/warp math uses zero-based ids within the current thread bounds.
-        local_thread_var = thread_var - thread_bounds.min
+        local_thread_index = thread_index - thread_bounds.min
         # Detect chained RS GEMM for this lower call
         arch = str(target.attrs["arch"]) if target and "arch" in target.attrs else "ppu_10"
         try:
@@ -183,7 +183,7 @@ class PPUGemmMMA(GemmBase):
         except ValueError:
             ppu_arch = 10
         a_from_gemm_c = self._is_chained_rs_gemm(ppu_arch)
-        mma_emitter = self._make_mma_emitter(target, thread_nums, thread_var=local_thread_var)
+        mma_emitter = self._make_mma_emitter(target, thread_nums, thread_index=local_thread_index)
 
         a_dtype = self.a_dtype
         b_dtype = self.b_dtype

@@ -26,6 +26,13 @@ _ATOMIC_MEMORY_ORDERS = {
 }
 
 
+def _vector_atomic_return_dtype(dst: BufferLikeType | Var, lanes: int) -> DataType:
+    if isinstance(dst, Var) and T.has_let_value(dst):
+        dst = T.get_let_value(dst)
+    buffer = dst if isinstance(dst, Buffer) else dst.buffer
+    return buffer.dtype.with_lanes(lanes)
+
+
 def _validate_memory_scope(scope: str) -> None:
     scopes = ("block", "device", "system")
     if scope not in scopes:
@@ -45,7 +52,8 @@ def _validate_atomic_order(operation: str, memory_order: str, scope: str) -> int
     supported_orders = _ATOMIC_MEMORY_ORDERS[operation]
     if not isinstance(memory_order, str) or memory_order not in supported_orders:
         supported = ", ".join(sorted(supported_orders))
-        raise ValueError(f"PPU {scope}-scope {operation} does not support memory_order={memory_order!r}; expected one of: {supported}")
+        qualifier = f"PPU {scope}-scope " if scope != "device" else ""
+        raise ValueError(f"{qualifier}{operation} does not support memory_order={memory_order!r}; expected one of: {supported}")
     return _MEMORY_ORDER_ID_MAP[memory_order]
 
 
@@ -427,14 +435,13 @@ def atomic_load(
 
     Performs an atomic load from `src` and returns a PrimExpr representing the loaded value.
     memory_order selects the ordering and must be one of: "relaxed", "consume", "acquire",
-    "release", "acq_rel", or "seq_cst" (default).
-    Raises KeyError if an unknown memory_order is provided.
-    For block and system scopes, only "relaxed", "consume", "acquire", and "seq_cst" are supported.
+    or "seq_cst" (default).
     scope may be "device" (default), "block", or "system";
     block and system scope currently require the PPU backend.
     System scope supports 32/64-bit integer and floating-point types.
-    Block and system scopes raise ValueError instead for invalid memory orders;
-    an unknown scope also raises ValueError.
+
+    Raises:
+        ValueError: If memory_order is not valid for an atomic load, or if scope is unknown.
 
     Note: atomic_load always returns the loaded value, so no return_prev parameter is needed.
 
@@ -464,12 +471,9 @@ def atomic_load(
         >>> current_count = atomic_load(counter, memory_order="relaxed")
     """
     _validate_memory_scope(scope)
-    if scope in ("block", "system"):
-        if scope == "system":
-            _validate_atomic_type("atomic_load", src.dtype, scope)
-        memory_order_id = _validate_atomic_order("atomic_load", memory_order, scope)
-    else:
-        memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order]
+    if scope == "system":
+        _validate_atomic_type("atomic_load", src.dtype, scope)
+    memory_order_id = _validate_atomic_order("atomic_load", memory_order, scope)
     return T.call_intrin(
         src.dtype,
         op.Op.get("tl.atomic_load_elem_op"),
@@ -494,7 +498,6 @@ def atomic_store(
         memory_order (str, optional): Memory ordering name; one of "relaxed", "release",
             or "seq_cst". Defaults to "seq_cst".
             The name is mapped to an internal numeric ID used by the underlying runtime.
-            For block and system scopes, only "relaxed", "release", and "seq_cst" are supported.
         scope (str): Memory visibility scope: ``"device"`` (default), ``"block"``, or ``"system"``.
             Block and system scope currently require the PPU backend.
             System scope supports 32/64-bit integer and floating-point types.
@@ -503,8 +506,7 @@ def atomic_store(
         PrimExpr: A handle representing the issued atomic store operation.
 
     Raises:
-        KeyError: If `memory_order` is not one of the supported names.
-        ValueError: Raised instead for invalid block/system-scope memory orders, or if scope is unknown.
+        ValueError: If memory_order is not valid for an atomic store, or if scope is unknown.
 
     Note: atomic_store doesn't return a previous value, so no return_prev parameter is needed.
 
@@ -540,12 +542,9 @@ def atomic_store(
         >>> atomic_store(log_counter, 0)  # Reset counter atomically
     """
     _validate_memory_scope(scope)
-    if scope in ("block", "system"):
-        if scope == "system":
-            _validate_atomic_type("atomic_store", dst.dtype, scope)
-        memory_order_id = _validate_atomic_order("atomic_store", memory_order, scope)
-    else:
-        memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order]
+    if scope == "system":
+        _validate_atomic_type("atomic_store", dst.dtype, scope)
+    memory_order_id = _validate_atomic_order("atomic_store", memory_order, scope)
     return T.call_intrin(
         "handle",
         op.Op.get("tl.atomic_store_elem_op"),

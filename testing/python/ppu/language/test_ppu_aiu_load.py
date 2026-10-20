@@ -6,7 +6,7 @@ import pytest
 import torch
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 import tilelang.ppu.transform
 import tilelang.testing
 from tvm import IRModule, tirx, transform

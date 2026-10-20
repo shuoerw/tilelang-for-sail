@@ -653,8 +653,8 @@ jobs:
             # Install system deps
             apt-get update && apt-get upgrade -y && apt-get install -y libopenmpi-dev 2>/dev/null || true
 
-            # Comment out the REPO_ROOT in-tree import override block that conflicts with wheel install
-            sed -i '/^REPO_ROOT/,/^$/{ /^$/!s/^/# / }' testing/conftest.py
+            # Keep wheel imports ahead of the source tree while allowing examples imports.
+            sed -i 's/sys.path.insert(0, REPO_ROOT)/sys.path.append(REPO_ROOT)/' testing/conftest.py
 
             # Install built tilelang wheel
             pip install dist/*.whl

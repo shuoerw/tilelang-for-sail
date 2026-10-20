@@ -506,7 +506,8 @@ TryRemoveThreadOwnedFactor(const PrimExpr &expr, const IterVar &iter_var,
 
 inline void CheckThreadOwnedStepsProjectable(
     const PrimExpr &index_expr, const Var &reduce_var,
-    const std::vector<ThreadReduceStep> &steps, arith::Analyzer *analyzer) {
+    const std::vector<ThreadReduceStep> &steps, const Target &target,
+    arith::Analyzer *analyzer) {
   if (steps.empty()) {
     return;
   }
@@ -520,9 +521,16 @@ inline void CheckThreadOwnedStepsProjectable(
   for (const auto &step : steps) {
     PrimExpr lower = make_const(reduce_var.dtype(), step.lower_factor);
     PrimExpr extent = make_const(reduce_var.dtype(), step.extent);
-    projected_reduce_var =
-        projected_reduce_var -
-        FloorMod(FloorDiv(reduce_var, lower), extent) * lower;
+    if (TargetIsPPU(target)) {
+      // PPU's nested div/mod indices need a subtraction-free projection.
+      PrimExpr upper = lower * extent;
+      projected_reduce_var = FloorDiv(projected_reduce_var, upper) * upper +
+                             FloorMod(projected_reduce_var, lower);
+    } else {
+      projected_reduce_var =
+          projected_reduce_var -
+          FloorMod(FloorDiv(reduce_var, lower), extent) * lower;
+    }
   }
 
   PrimExpr simplified_index = analyzer->Simplify(index_expr);
@@ -541,14 +549,14 @@ inline void CheckThreadOwnedStepsProjectable(
 inline std::pair<PrimExpr, IterVar> BuildLocalReduceIterator(
     const PrimExpr &index_expr, const Array<IterVar> &input_iters,
     const Var &reduce_var, const std::vector<ThreadReduceStep> &thread_steps,
-    arith::Analyzer *analyzer) {
+    const Target &target, arith::Analyzer *analyzer) {
   auto [expr, iter_var] =
       CompressIterator(index_expr, input_iters, reduce_var, analyzer);
   arith::Analyzer proof_analyzer;
   for (const auto &iv : input_iters) {
     proof_analyzer.Bind(iv->var, iv->dom, /*allow_override=*/true);
   }
-  CheckThreadOwnedStepsProjectable(index_expr, reduce_var, thread_steps,
+  CheckThreadOwnedStepsProjectable(index_expr, reduce_var, thread_steps, target,
                                    &proof_analyzer);
 
   int64_t remaining_thread_owned_factor = ThreadOwnedReduceFactor(thread_steps);
@@ -580,7 +588,7 @@ inline ReduceOwnershipPlan
 MakeReduceOwnershipPlan(const Array<PrimExpr> &src_indices,
                         const PrimExpr &src_thread,
                         const Array<IterVar> &src_vars, const Var &reduce_var,
-                        arith::Analyzer *analyzer) {
+                        const Target &target, arith::Analyzer *analyzer) {
   // Use src_thread as the single source of truth for thread-owned reduce
   // splits.  These steps are later used verbatim to emit scalar or batched
   // AllReduce, so the local loop must not enumerate the same split again.
@@ -597,7 +605,7 @@ MakeReduceOwnershipPlan(const Array<PrimExpr> &src_indices,
   Array<IterVar> local_reduce_vars;
   for (const auto &src_index : src_indices) {
     auto [expr, var] = BuildLocalReduceIterator(src_index, src_vars, reduce_var,
-                                                thread_steps, analyzer);
+                                                thread_steps, target, analyzer);
     local_src_indices.push_back(expr);
     local_reduce_vars.push_back(var);
   }
@@ -804,7 +812,8 @@ template <typename Impl> struct ReduceLowerer {
           src_vars.Map([](const auto &iv) { return PrimExpr(iv->var); }), {});
 
       auto reduce_plan = reduce::MakeReduceOwnershipPlan(
-          src_indices, src_thread, src_vars, src_vars[op.dim]->var, analyzer);
+          src_indices, src_thread, src_vars, src_vars[op.dim]->var,
+          lower_args.target, analyzer);
 
       Array<Stmt> stmts;
 

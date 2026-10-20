@@ -1,6 +1,6 @@
 import torch
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.language.fp8 import determine_fp8_type
 
 

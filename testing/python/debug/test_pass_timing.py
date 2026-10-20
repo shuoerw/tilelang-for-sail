@@ -151,7 +151,8 @@ def test_pass_timing_report_is_emitted_on_failure(monkeypatch):
     assert contexts == ["stage=jit-lower, kernel=main"]
 
 
-def test_pass_timing_cleans_incomplete_frames_after_pass_failure(caplog):
+def test_pass_timing_cleans_incomplete_frames_after_pass_failure(caplog, monkeypatch):
+    monkeypatch.setattr(logging.getLogger("tilelang"), "propagate", True)
     timing = TileLangPassTimingInstrument()
 
     @tvm.transform.module_pass(opt_level=0, name="FailingPass")
@@ -166,7 +167,8 @@ def test_pass_timing_cleans_incomplete_frames_after_pass_failure(caplog):
     assert "Discarding 1 incomplete pass timing frame" in caplog.text
 
 
-def test_pass_timing_ignores_unmatched_after_callback(caplog):
+def test_pass_timing_ignores_unmatched_after_callback(caplog, monkeypatch):
+    monkeypatch.setattr(logging.getLogger("tilelang"), "propagate", True)
     timing = TileLangPassTimingInstrument()
     caplog.set_level(logging.WARNING, logger="tilelang.pass_timing")
 

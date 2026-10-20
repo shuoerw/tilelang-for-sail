@@ -12,7 +12,7 @@ def test_runtime_unknown_sign_vector_negative_index_load():
             for t in T.serial(4):
                 B[t, T.Ramp(0, 1, 4)] = A[T.Ramp(t - 2, 1, 4)]
 
-    kernel = tilelang.compile(main, out_idx=[1], target="cuda")
+    kernel = tilelang.compile(main, out_idx=[1], target="auto")
 
     a = torch.arange(1024, device="cuda", dtype=torch.float32)
     b = kernel(a)
@@ -39,7 +39,7 @@ def test_runtime_unknown_sign_vector_negative_index_store():
             for t in T.serial(4):
                 A[T.Ramp(t - 2, 1, 4)] = B[t, T.Ramp(0, 1, 4)]
 
-    kernel = tilelang.compile(main, out_idx=[1], target="cuda")
+    kernel = tilelang.compile(main, out_idx=[1], target="auto")
 
     b = torch.arange(16, device="cuda", dtype=torch.float32).reshape(4, 4)
     a = kernel(b)

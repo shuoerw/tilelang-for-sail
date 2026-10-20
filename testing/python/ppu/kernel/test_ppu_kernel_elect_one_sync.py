@@ -14,7 +14,7 @@ import pytest
 import torch
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 import tilelang.testing
 
 NUM_THREADS = 128

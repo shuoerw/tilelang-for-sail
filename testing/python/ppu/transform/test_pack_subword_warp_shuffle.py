@@ -1,6 +1,6 @@
 """Tests for proven PPU scalar-to-packed subword warp-shuffle rewrites."""
 
-import tilelang.language as T
+import tilelang.ppu.language as T
 import tilelang.ppu.transform
 import tilelang.testing
 from tilelang import tvm

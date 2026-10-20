@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import tilelang
 from tilelang.autotuner import *
-import tilelang.language as T
+import tilelang.ppu.language as T
 from functools import partial
 
 num_split = 4

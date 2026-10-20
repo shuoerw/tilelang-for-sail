@@ -9,6 +9,7 @@ from tilelang.language.tir.exports import (
     CLASSIFIED_VENDOR_TIR_EXPORTS,
     CUDA_ONLY_TIR_EXPORTS,
     METAL_ONLY_TIR_EXPORTS,
+    PPU_ONLY_TIR_EXPORTS,
     SHARED_LEGACY_TIR_EXPORTS,
 )
 
@@ -179,3 +180,78 @@ def test_cuda_whole_module_implementations_live_under_cuda():
     assert T.cluster_sync.__module__ == "tilelang.cuda.language.cluster"
     assert T.rng_init.__module__ == "tilelang.cuda.language.random"
     assert T.ws.__module__ == "tilelang.cuda.language.warpgroup"
+
+
+def test_ppu_language_composes_common_and_supported_intrinsics():
+    from tilelang.ppu import language as T
+
+    assert T.__tilelang_dialect__ == "ppu"
+    assert set(T.__all__) >= set(T_comm.__all__)
+    assert T.copy is T_comm.copy
+    assert set(T.__all__) >= PPU_ONLY_TIR_EXPORTS
+    assert {"ptx_ldmatrix", "ptx_mma", "ptx_mma_sp"} <= set(T.__all__)
+    assert (CUDA_ONLY_NAMES - {"rng_init", "pdl_trigger"}).isdisjoint(T.__all__)
+    assert ROCM_ONLY_NAMES.isdisjoint(T.__all__)
+    assert METAL_ONLY_TIR_EXPORTS.isdisjoint(T.__all__)
+    for name in (*PPU_ONLY_TIR_EXPORTS, "rng_init", "rng_rand", "rng_rand_float", "pdl_sync", "pdl_trigger"):
+        assert getattr(T, name).__module__ == "tilelang.ppu.language"
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "tilelang.language.common",
+        "tilelang.cpu.language",
+        "tilelang.cuda.language",
+        "tilelang.metal.language",
+        "tilelang.rocm.language",
+        "tilelang.webgpu.language",
+    ],
+)
+def test_non_ppu_dialects_do_not_export_ppu_intrinsics(module_name):
+    module = importlib.import_module(module_name)
+    for name in PPU_ONLY_TIR_EXPORTS:
+        assert name not in module.__all__
+        assert not hasattr(module, name)
+
+
+def test_ppu_intrinsics_construct_registered_ops():
+    from tilelang.ppu import language as T
+    from tvm import tirx
+
+    pointer = tirx.Var("pointer", "handle")
+    swizzle = T.tix_ldmatrix_swzl(False, 4, pointer, pointer, 0)
+    assert swizzle.op.name == "tl.tix_ldmatrix_swzl"
+    aiu = T.ppu_aiu_load(pointer, pointer, 32, 32, 16, 16, 64, 0, 0, 0)
+    assert aiu.op.name == "tl.ppu_aiu_load"
+    scaled = T.ptx_mma_scaled(
+        "m16n16k32",
+        "row",
+        "col",
+        "e2m1",
+        "e2m1",
+        "fp32",
+        pointer,
+        0,
+        pointer,
+        0,
+        pointer,
+        0,
+        False,
+        1,
+        2,
+        0,
+        1,
+        dtype="float32",
+    )
+    assert scaled.op.name == "tirx.ptx_mma"
+    assert len(scaled.args) == 17
+    assert T.rng_init(42, 0).op.name == "tl.rng_init"
+    assert T.pdl_trigger().op.name == "tl.pdl_trigger"
+
+
+def test_ppu_rng_rejects_cuda_generator():
+    from tilelang.ppu import language as T
+
+    with pytest.raises(ValueError, match="Unsupported PPU random generator"):
+        T.rng_init(42, 0, generator="curandStatePhilox4_32_10_t")

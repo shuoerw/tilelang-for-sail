@@ -9,7 +9,7 @@ python3 examples/gemm/example_gemm_advanced_autotune.py --use_autotune --enable_
 import argparse
 import itertools
 import tilelang as tl
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.transform import PassConfigKey
 from tilelang.autotuner import AutoTuner
 from tilelang.carver.template import MatmulTemplate

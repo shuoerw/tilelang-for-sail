@@ -6,7 +6,7 @@ import pytest
 import torch
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 import tilelang.testing
 from tilelang import tvm
 from tilelang.ppu.intrinsics.macro.mma_macro_generator import PPUTensorCoreIntrinEmitter

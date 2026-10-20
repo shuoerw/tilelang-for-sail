@@ -1016,50 +1016,6 @@ def ptx_mma(
     )
 
 
-def ptx_mma_scaled(
-    dtype,
-    shape,
-    A_layout,
-    B_layout,
-    A_dtype,
-    B_dtype,
-    C_dtype,
-    multiplicand_a,
-    a_index,
-    multiplicand_b,
-    b_index,
-    accumulator,
-    c_index,
-    saturate,
-    scale_a,
-    scale_b,
-    scale_a_selector,
-    scale_b_selector,
-):
-    """PPU FP4 MMA intrinsic with four explicit runtime scale operands."""
-    return call_intrin(
-        dtype,
-        "tirx.ptx_mma",
-        shape,
-        A_layout,
-        B_layout,
-        A_dtype,
-        B_dtype,
-        C_dtype,
-        multiplicand_a,
-        a_index,
-        multiplicand_b,
-        b_index,
-        accumulator,
-        c_index,
-        saturate,
-        scale_a,
-        scale_b,
-        scale_a_selector,
-        scale_b_selector,
-    )
-
-
 def ptx_mma_sp(
     dtype,
     shape,
@@ -2118,88 +2074,6 @@ def ptx_wait_barrier(barrier_id):
         The call expression.
     """
     return _tvm_op.ptx_wait_barrier(barrier_id)
-
-
-def tix_ldmatrix_swzl(trans, num, src_access_ptr, dst_access_ptr, swzl_mode, trans_block=False):
-    """PPU ldmatrix intrinsic using swizzled bulk tensor load.
-
-    This follows the v0.1.11 access-pointer style used by ``ptx_ldmatrix`` and
-    adds the PPU1.5 swizzle mode and block-transpose flag.
-    """
-    return tvm.tirx.call_intrin(
-        "handle",
-        tvm.tirx.op.Op.get("tl.tix_ldmatrix_swzl"),
-        trans,
-        num,
-        src_access_ptr,
-        dst_access_ptr,
-        swzl_mode,
-        trans_block,
-    )
-
-
-def ppu_aiu_load(
-    smem_ptr,
-    gmem_ptr,
-    dim_c,
-    dim_w,
-    cube_c,
-    cube_w,
-    stride_w_bytes,
-    start_c,
-    start_w,
-    swzl_mode,
-    is_swizzle=1,
-):
-    """TIX AIU Load operation.
-
-    Issue a warp-level asynchronous load. The caller selects the issuing warp
-    and manages commit/wait operations. Out-of-bounds coordinates are zero-filled.
-    The shared destination must be 128-byte aligned. ``cube_c``, ``cube_w``,
-    ``swzl_mode``, and ``is_swizzle`` must be compile-time constants.
-
-    Parameters
-    ----------
-    smem_ptr : PrimExpr
-        Shared memory destination pointer.
-    gmem_ptr : PrimExpr
-        Global memory source pointer.
-    dim_c : int | PrimExpr
-        C dimension size (bytes).
-    dim_w : int | PrimExpr
-        W dimension size (rows).
-    cube_c : int
-        Copy block C size (bytes), at most 128. Swizzled loads require 64 or 128.
-    cube_w : int
-        Copy block W size (rows).
-    stride_w_bytes : int | PrimExpr
-        Row stride in bytes.
-    start_c : int | PrimExpr
-        Start coordinate on C axis (bytes).
-    start_w : int | PrimExpr
-        Start coordinate on W axis (rows).
-    swzl_mode : int
-        Swizzle mode (0=128B, 1=64B).
-    is_swizzle : bool | int
-        Use a swizzled destination (default 1); set to 0 for a linear destination.
-    """
-
-    return tvm.tirx.call_intrin(
-        "handle",
-        tvm.tirx.op.Op.get("tl.ppu_aiu_load"),
-        smem_ptr,
-        gmem_ptr,
-        dim_c,
-        dim_w,
-        cube_c,
-        cube_w,
-        stride_w_bytes,
-        start_c,
-        start_w,
-        swzl_mode,
-        is_swizzle,
-        annotations={"no_implicit_async_commit_wait": const(1, "int32")},
-    )
 
 
 def create_barriers(barrier_count):

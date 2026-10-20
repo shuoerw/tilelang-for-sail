@@ -517,7 +517,7 @@ def test_reduce_local_packed_codegen(op, packed_op):
             _reduce_op(T, op, src, dst, dim=0)
             B[0] = dst[0]
 
-    target = {"kind": "cuda", "arch": "sm_80"}
+    target = {"kind": "ppu", "arch": "ppu_10"} if tilelang.testing._check_is_ppu() else {"kind": "cuda", "arch": "sm_80"}
     with tvm.transform.PassContext(), tvm.target.Target(target):
         artifact = tilelang.lower(main, target=target)
     assert f"tl::{packed_op}" in artifact.kernel_source
@@ -540,7 +540,7 @@ def test_reduce_local_noncontiguous_dim_packed_codegen(op, packed_op):
             for j in T.serial(4):
                 B[j] = dst[j]
 
-    target = {"kind": "cuda", "arch": "sm_80"}
+    target = {"kind": "ppu", "arch": "ppu_10"} if tilelang.testing._check_is_ppu() else {"kind": "cuda", "arch": "sm_80"}
     with tvm.transform.PassContext(), tvm.target.Target(target):
         artifact = tilelang.lower(main, target=target)
     assert f"tl::{packed_op}" in artifact.kernel_source
@@ -561,7 +561,7 @@ def test_reduce_local_to_var_packed_codegen(op, packed_op):
             _reduce_op(T, op, src, dst, dim=0)
             B[0] = dst
 
-    target = {"kind": "cuda", "arch": "sm_80"}
+    target = {"kind": "ppu", "arch": "ppu_10"} if tilelang.testing._check_is_ppu() else {"kind": "cuda", "arch": "sm_80"}
     with tvm.transform.PassContext(), tvm.target.Target(target):
         artifact = tilelang.lower(main, target=target)
     assert f"tl::{packed_op}" in artifact.kernel_source
@@ -588,6 +588,80 @@ def test_reduce_local_packed_correctness(op):
     A = torch.randn((8,), dtype=torch.float16, device="cuda")
     B = jit_kernel(A)
     torch.testing.assert_close(B[0], _ref(A.reshape(1, 8), op)[0], atol=1e-1, rtol=1e-1)
+
+
+def _make_split_segment_reduce(op, lane_width, batch=1):
+    def layout(i, j):
+        if lane_width == 4:
+            thread = i // 32 * 64 + j // 32 * 32 + i % 8 * 4 + j % 4
+            index = i % 32 // 16 * 16 + j % 32 // 16 * 8 + i % 16 // 8 * 4 + j % 16 // 4
+        else:
+            thread = i // 32 * 64 + j // 32 * 32 + i % 8 // 2 * 8 + j % 8
+            index = j % 32 // 16 * 16 + i % 32 // 8 * 4 + j % 16 // 8 * 2 + i % 2
+        return thread, index
+
+    @T.prim_func
+    def main(A: T.Tensor((64, 64), T.float32), B: T.Tensor((64,), T.float32)):
+        with T.Kernel(1, threads=128):
+            src = T.alloc_fragment((64, 64), T.float32)
+            dst = T.alloc_fragment((64,), T.float32)
+            T.annotate_layout({src: T.Fragment((64, 64), forward_fn=layout)})
+            T.copy(A, src)
+            _reduce_op(T, op, src, dst, dim=1, batch=batch)
+            T.copy(dst, B)
+
+    return main
+
+
+@tilelang.testing.requires_ppu
+@pytest.mark.parametrize("lane_width", [4, 8])
+@pytest.mark.parametrize("op", ["sum", "max", "min"])
+@pytest.mark.parametrize("batch", [1, 4])
+def test_reduce_split_thread_segments(op, lane_width, batch):
+    kernel = tilelang.compile(_make_split_segment_reduce(op, lane_width, batch), target="ppu", out_idx=[1])
+    a = torch.randint(-8, 9, (64, 64), device="cuda", dtype=torch.float32)
+    torch.testing.assert_close(kernel(a), _ref(a, op), rtol=0, atol=0)
+
+
+@tilelang.testing.requires_ppu
+@pytest.mark.parametrize("arch", ["ppu_10", "ppu_15"])
+@pytest.mark.parametrize("lane_width", [4, 8])
+def test_reduce_split_thread_segments_ppu_codegen(arch, lane_width):
+    target = tvm.target.Target({"kind": "ppu", "arch": arch})
+    with target:
+        artifact = tilelang.lower(_make_split_segment_reduce("sum", lane_width), target=target)
+    assert "tl::AllReduce<" in artifact.kernel_source
+
+
+@tilelang.testing.requires_ppu
+@pytest.mark.parametrize("arch", ["ppu_10", "ppu_15"])
+@pytest.mark.parametrize("lane_width", [4, 8])
+def test_ppu_reduce_rejects_thread_owned_source_index(arch, lane_width):
+    import tilelang.ppu.transform
+
+    target = tvm.target.Target({"kind": "ppu", "arch": arch})
+
+    @T.prim_func
+    def main():
+        T.func_attr({"global_symbol": "main", "target": target})
+        T.launch_thread("blockIdx.x", 1)
+        T.launch_thread("threadIdx.x", 8 * lane_width)
+        with T.sblock("root"):
+            src = T.sblock_alloc_buffer((8, 64), T.float32, scope="local.fragment")
+            dst = T.sblock_alloc_buffer((8,), T.float32, scope="local.fragment")
+            T.sblock_attr(
+                {
+                    "layout_map": {
+                        src: T.Fragment((8, 64), forward_fn=lambda i, j: (i * lane_width + j % lane_width, j)),
+                        dst: T.Fragment((8,), forward_fn=lambda i, rep: (i * lane_width + rep, 0), replicate=lane_width),
+                    }
+                }
+            )
+            T.reduce_sum(src, dst, dim=1)
+
+    # Bypass layout inference to exercise the reduce ownership check itself.
+    with target, pytest.raises(Exception, match="source index depends on a thread-owned reduce segment"):
+        tilelang.ppu.transform.LowerTileOp()(tvm.IRModule.from_expr(main))
 
 
 # ---------------------------------------------------------------------------

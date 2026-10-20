@@ -2,7 +2,7 @@ import torch
 import math
 import argparse
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.profiler import do_bench
 
 torch.manual_seed(0)

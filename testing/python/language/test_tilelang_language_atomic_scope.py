@@ -163,7 +163,9 @@ def test_device_scope_preserves_unknown_order_error(operation):
     buffer = tirx.decl_buffer((4,), "int32")
     atomic = getattr(T, f"atomic_{'add' if operation == 'add_ret' else operation}")
     args = [buffer[0]] if operation == "load" else [buffer[0], 1]
-    with pytest.raises(KeyError):
+    # Upstream validates load/store orders, but atomic_add still indexes the raw order map.
+    error, match = (KeyError, None) if operation in ("add", "add_ret") else (ValueError, f"^atomic_{operation} does not support")
+    with pytest.raises(error, match=match):
         atomic(*args, memory_order="unknown")
 
 

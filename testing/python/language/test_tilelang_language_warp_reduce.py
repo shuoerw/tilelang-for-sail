@@ -93,7 +93,8 @@ WARP_REDUCE_CASES_64 = [
     ("op", "dtype", "N"),
     WARP_REDUCE_CASES_64,
 )
-def test_warp_reduce_64(op, dtype, N):
+@pytest.mark.parametrize("input_kind", ["random", "high_bits", "signed"])
+def test_warp_reduce_64(op, dtype, N, input_kind):
     def warp_reduce_ref(a):
         if op == "sum":
             return torch.full_like(a, a.sum())
@@ -116,7 +117,14 @@ def test_warp_reduce_64(op, dtype, N):
     torch_dtype = getattr(torch, dtype)
     tl_dtype = getattr(T, dtype)
 
-    a = torch.randint(1 << 32, (1 << 63) - 1, (N,), dtype=torch_dtype, device="cuda")
+    if input_kind == "random":
+        a = torch.randint(1 << 32, (1 << 63) - 1, (N,), dtype=torch_dtype, device="cuda")
+    else:
+        lanes = torch.arange(N, dtype=torch_dtype, device="cuda")
+        if input_kind == "high_bits":
+            a = (1 << 40) | lanes
+        else:
+            a = torch.where(lanes % 2 == 0, (1 << 45) + lanes, -(1 << 44) - lanes)
     ref = warp_reduce_ref(a)
 
     kernel = get_kernel(op, tl_dtype)

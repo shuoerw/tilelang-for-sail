@@ -2,7 +2,7 @@ import argparse
 import torch
 import tilelang
 from tilelang.autotuner import *
-import tilelang.language as T
+import tilelang.ppu.language as T
 from einops import rearrange, repeat
 import itertools
 
