@@ -1454,7 +1454,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     PrimExpr coord_1_rows = compute_local_coord(cube_layout_pos[1], rank - 1);
     DataType dtype = global_tensor->dtype;
     Array<PrimExpr> args;
-    args.reserve(10);
+    args.reserve(12);
     args.push_back(shared_addr);
     args.push_back(global_addr);
     args.push_back(AiuBytesFromElements(shape_0_elements, dtype));
@@ -1466,6 +1466,8 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     args.push_back(AiuBytesFromElements(coord_0_elements, dtype));
     args.push_back(coord_1_rows);
     args.push_back(swizzle);
+    args.push_back(IntImm(DataType::Int(32), 1));
+    args.push_back(IntImm(DataType::Int(32), 128));
     load_stmts.push_back(
         Evaluate(Call(DataType::Handle(), ppu_aiu_load(), args, annotations)));
   }

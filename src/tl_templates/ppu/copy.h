@@ -283,34 +283,115 @@ TL_DEVICE void store_global_128_conditional(void *ptr, uint4 value, bool pred) {
   global_store<uint4, 16>(ptr, value, pred);
 }
 
+enum class AiuPrefetch : uint32_t {
+  kNone = 0,
+  kLLC64B = 64,
+  kLLC128B = 128,
+  kLLC256B = 256,
+};
+
 template <bool Swizzled = true>
 TL_DEVICE void aiu_load(void const *smem_ptr, void const *global_ptr,
                         uint32_t dim_c, uint32_t dim_w, uint32_t cube_c,
                         uint32_t cube_w, uint64_t stride_w_bytes,
-                        int32_t start_c, int32_t start_w, uint32_t swzl_mode) {
+                        int32_t start_c, int32_t start_w, uint32_t swzl_mode,
+                        AiuPrefetch prefetch = AiuPrefetch::kLLC128B) {
   uint32_t smem_addr = smem_ptr_to_uint(smem_ptr);
   uint64_t stride_n_bytes = stride_w_bytes * dim_w;
-
-  if constexpr (Swizzled) {
-    asm volatile(
-        "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.LLC::128B.padz."
-        "swzl.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
-        "{%10, %11, %12}, %13;\n"
-        :
-        : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
-          "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
-          "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
-          "r"(swzl_mode));
-  } else {
-    asm volatile(
-        "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.padz.linear.b8 "
-        "[%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
-        "{%10, %11, %12}, %13;\n"
-        :
-        : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
-          "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
-          "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
-          "r"(swzl_mode));
+  switch (prefetch) {
+  case AiuPrefetch::kNone:
+    if constexpr (Swizzled) {
+      asm volatile("ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.padz."
+                   "swzl.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+                   "{%10, %11, %12}, %13;\n"
+                   :
+                   : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w),
+                     "r"(1), "r"(cube_c), "r"(cube_w), "r"(1),
+                     "l"(stride_w_bytes), "l"(stride_n_bytes), "r"(start_c),
+                     "r"(start_w), "r"(0), "r"(swzl_mode));
+    } else {
+      asm volatile(
+          "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.padz."
+          "linear.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+          "{%10, %11, %12}, %13;\n"
+          :
+          : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+            "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+            "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+            "r"(swzl_mode));
+    }
+    break;
+  case AiuPrefetch::kLLC64B:
+    if constexpr (Swizzled) {
+      asm volatile(
+          "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.LLC::64B.padz."
+          "swzl.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+          "{%10, %11, %12}, %13;\n"
+          :
+          : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+            "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+            "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+            "r"(swzl_mode));
+    } else {
+      asm volatile(
+          "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.LLC::64B.padz."
+          "linear.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+          "{%10, %11, %12}, %13;\n"
+          :
+          : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+            "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+            "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+            "r"(swzl_mode));
+    }
+    break;
+  case AiuPrefetch::kLLC128B:
+    if constexpr (Swizzled) {
+      asm volatile(
+          "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.LLC::128B.padz."
+          "swzl.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+          "{%10, %11, %12}, %13;\n"
+          :
+          : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+            "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+            "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+            "r"(swzl_mode));
+    } else {
+      asm volatile(
+          "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.LLC::128B.padz."
+          "linear.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+          "{%10, %11, %12}, %13;\n"
+          :
+          : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+            "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+            "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+            "r"(swzl_mode));
+    }
+    break;
+  case AiuPrefetch::kLLC256B:
+    if constexpr (Swizzled) {
+      asm volatile(
+          "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.LLC::256B.padz."
+          "swzl.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+          "{%10, %11, %12}, %13;\n"
+          :
+          : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+            "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+            "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+            "r"(swzl_mode));
+    } else {
+      asm volatile(
+          "ppu.cp.async.aiu.bulk.tensor.shared.global.2d.tile.LLC::256B.padz."
+          "linear.b8 [%0], [%1], {%2, %3, %4}, {%5, %6, %7}, {%8, %9}, "
+          "{%10, %11, %12}, %13;\n"
+          :
+          : "r"(smem_addr), "l"(global_ptr), "r"(dim_c), "r"(dim_w), "r"(1),
+            "r"(cube_c), "r"(cube_w), "r"(1), "l"(stride_w_bytes),
+            "l"(stride_n_bytes), "r"(start_c), "r"(start_w), "r"(0),
+            "r"(swzl_mode));
+    }
+    break;
+  default:
+    TILELANG_UNREACHABLE("Invalid AIU prefetch mode");
   }
 }
 

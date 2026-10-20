@@ -79,12 +79,14 @@ def test_aiu_requires_canonical_address_mapping(dtype, bank_bytes, threads, kind
         return int(tvm.arith.Analyzer().simplify(expr))
 
     for index, call in enumerate(calls):
-        assert len(call.args) == 10
+        assert len(call.args) == 12
         assert const(call.args[2]) == 4 * bank_bytes, "Global width is measured in bytes"
         assert const(call.args[3]) == 16, "Global height is measured in rows"
         assert const(call.args[4]) == bank_bytes, "Instruction width is measured in bytes"
         assert const(call.args[6]) == 4 * bank_bytes, "Global row stride is measured in bytes"
         assert const(call.args[9]) == (0 if bank_bytes == 128 else 1)
+        assert const(call.args[10]) == 1
+        assert const(call.args[11]) == 128
         variables = []
         tvm.tirx.stmt_functor.post_order_visit(
             call.args[7], lambda node, variables=variables: variables.append(node) if isinstance(node, tvm.tirx.Var) else None

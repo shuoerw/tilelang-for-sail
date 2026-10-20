@@ -149,6 +149,27 @@ GPU and set it in the target config or use the corresponding target tag—for ex
 Refer to NVIDIA’s [CUDA GPUs](https://developer.nvidia.com/cuda-gpus) page or the TVM source
 (`3rdparty/tvm/src/target/tag.cc`) for the latest mapping between devices and compute capabilities.
 
+## PPU AIU prefetch
+
+On PPU 1.5, AIU loads use the `.LLC::128B` prefetch hint by default. Set
+the optional `prefetch_bytes` argument of `T.ppu_aiu_load` to a compile-time integer:
+`64`, `128`, or `256` bytes, or `0` to omit the prefetch hint. Each load can choose
+its own value, including different values within the same kernel.
+
+For example, to omit the hint for one load:
+
+```python
+T.ppu_aiu_load(
+    smem_ptr, gmem_ptr, dim_c, dim_w, cube_c, cube_w,
+    stride_w_bytes, start_c, start_w, swzl_mode,
+    prefetch_bytes=0,
+)
+```
+
+Omitting the argument selects `128`. AIU loads selected for
+`T.copy(..., prefer_instruction="aiu")` also use this default. The prefetch size is
+a cache hint; copy extents and synchronization are unchanged.
+
 ## Creating targets programmatically
 
 TileLang exposes the helper `tilelang.backend.target.determine_target` (returns a canonical target string or config

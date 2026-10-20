@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import builtins
+
 from tvm import tirx
 
 from tilelang._typing import BufferLikeType
@@ -193,7 +195,61 @@ def tix_ldmatrix_swzl(trans, num, src_access_ptr, dst_access_ptr, swzl_mode, tra
     )
 
 
-def ppu_aiu_load(smem_ptr, gmem_ptr, dim_c, dim_w, cube_c, cube_w, stride_w_bytes, start_c, start_w, swzl_mode, is_swizzle=1):
+def ppu_aiu_load(
+    smem_ptr,
+    gmem_ptr,
+    dim_c,
+    dim_w,
+    cube_c,
+    cube_w,
+    stride_w_bytes,
+    start_c,
+    start_w,
+    swzl_mode,
+    is_swizzle=1,
+    *,
+    prefetch_bytes: int = 128,
+):
+    """TIX AIU Load operation.
+
+    Directly invokes the backend ppu_aiu_load with a per-load LLC prefetch hint.
+
+    Parameters
+    ----------
+    smem_ptr : PrimExpr
+        Shared memory destination pointer.
+    gmem_ptr : PrimExpr
+        Global memory source pointer.
+    dim_c : int | PrimExpr
+        C dimension size (bytes).
+    dim_w : int | PrimExpr
+        W dimension size (rows).
+    cube_c : int
+        Copy block C size (bytes).
+    cube_w : int
+        Copy block W size (rows).
+    stride_w_bytes : int | PrimExpr
+        Row stride in bytes.
+    start_c : int | PrimExpr
+        Start coordinate on C axis (bytes).
+    start_w : int | PrimExpr
+        Start coordinate on W axis (rows).
+    swzl_mode : int
+        Swizzle mode (0=128B, 1=64B).
+    is_swizzle : bool | int, optional
+        Use a swizzled destination (1, default) or a linear destination (0).
+    prefetch_bytes : int, optional
+        Compile-time LLC prefetch size: 64, 128 (default), or 256 bytes.
+        Zero omits the prefetch hint. This does not change the copy extent.
+    """
+
+    if isinstance(prefetch_bytes, tirx.IntImm):
+        prefetch_bytes = prefetch_bytes.value
+    if isinstance(prefetch_bytes, builtins.bool) or not isinstance(prefetch_bytes, builtins.int):
+        raise TypeError("ppu_aiu_load prefetch_bytes must be a compile-time integer")
+    if prefetch_bytes not in (0, 64, 128, 256):
+        raise ValueError("ppu_aiu_load prefetch_bytes must be 0, 64, 128, or 256")
+
     return tirx.call_intrin(
         "handle",
         tirx.op.Op.get("tl.ppu_aiu_load"),
@@ -208,6 +264,7 @@ def ppu_aiu_load(smem_ptr, gmem_ptr, dim_c, dim_w, cube_c, cube_w, stride_w_byte
         start_w,
         swzl_mode,
         is_swizzle,
+        prefetch_bytes,
         annotations={"no_implicit_async_commit_wait": tirx.const(1, "int32")},
     )
 
