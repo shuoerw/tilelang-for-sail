@@ -2495,17 +2495,17 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
         << "PPU only supports ppu0010/ppu0015; TMA load lowering requires "
            "ppu0015+ TMA.";
   } else if (op->op.same_as(tl::ppu_aiu_load())) {
-    ICHECK(op->args.size() == 10U || op->args.size() == 11U)
-        << "ppu_aiu_load expects 10 or 11 args (smem, global, dim_c, dim_w, "
+    ICHECK(op->args.size() >= 10U && op->args.size() <= 12U)
+        << "ppu_aiu_load expects 10, 11, or 12 args (smem, global, dim_c, dim_w, "
            "cube_c, cube_w, stride_w_bytes, start_c, start_w, swzl_mode, "
-           "[is_swizzle]), got "
+           "[is_swizzle], [prefetch_bytes]), got "
         << op->args.size();
 
     arith::Analyzer analyzer;
     PrimExpr cube_c_expr = analyzer.Simplify(op->args[4]);
     PrimExpr cube_w_expr = analyzer.Simplify(op->args[5]);
     PrimExpr swzl_mode_expr = analyzer.Simplify(op->args[9]);
-    PrimExpr is_swizzle_expr = op->args.size() == 11U
+    PrimExpr is_swizzle_expr = op->args.size() >= 11U
                                    ? analyzer.Simplify(op->args[10])
                                    : IntImm(DataType::Int(32), 1);
     const int64_t *cube_c = as_const_int(cube_c_expr);
@@ -2540,6 +2540,17 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
           << *swzl_mode;
     }
 
+    int64_t prefetch_bytes = 128;
+    if (op->args.size() == 12U) {
+      const auto *prefetch = op->args[11].as<IntImmNode>();
+      ICHECK(prefetch != nullptr)
+          << "ppu_aiu_load prefetch_bytes must be a compile-time integer";
+      prefetch_bytes = prefetch->value;
+    }
+    ICHECK(prefetch_bytes == 0 || prefetch_bytes == 64 ||
+           prefetch_bytes == 128 || prefetch_bytes == 256)
+        << "ppu_aiu_load prefetch_bytes must be 0, 64, 128, or 256";
+
     std::vector<std::string> args;
     for (int index = 0; index < 10; ++index) {
       args.push_back(this->PrintExpr(op->args[index]));
@@ -2555,6 +2566,12 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
         this->stream << ", ";
       }
       this->stream << args[i];
+    }
+    this->stream << ", tl::AiuPrefetch::";
+    if (prefetch_bytes == 0) {
+      this->stream << "kNone";
+    } else {
+      this->stream << "kLLC" << prefetch_bytes << "B";
     }
     this->stream << ");\n";
   } else if (op->op.same_as(tl::tma_store()) ||
