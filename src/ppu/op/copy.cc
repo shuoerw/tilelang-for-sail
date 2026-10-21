@@ -1077,7 +1077,14 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   args.push_back(coord_1_rows);                       // [8] start_w (rows)
   args.push_back(swizzle);                            // [9] swzl_mode
 
-  Stmt aiu_copy = Evaluate(Call(DataType::Handle(), ppu_aiu_load(), args));
+  // Preserve pipeline ownership after the copy becomes a predicated AIU load.
+  Map<String, ObjectRef> annotations;
+  if (GetNoImplicitAsyncCommitWait(op)) {
+    annotations.Set(attr::kAsyncCopyNoImplicitCommitWait,
+                    IntImm(DataType::Int(32), 1));
+  }
+  Stmt aiu_copy =
+      Evaluate(Call(DataType::Handle(), ppu_aiu_load(), args, annotations));
   return IfThenElse(LT(warp_id, IntImm(DataType::Int(32), participating_warps)),
                     aiu_copy);
 }
