@@ -75,24 +75,58 @@ def test_ppu_system_atomic_return_codegen(dtype):
 
 
 @tilelang.testing.requires_ppu
-@pytest.mark.parametrize(("operation", "memory_order"), [("add", 6), ("load", 3), ("load", 4), ("store", 1), ("store", 2), ("store", 4)])
-def test_ppu_system_atomic_raw_ir_rejects_invalid_order(operation, memory_order):
-    # Bypass the Python API: the backend must reject malformed imported IR too.
+@pytest.mark.parametrize("scope", ["block", "system"])
+@pytest.mark.parametrize("operation", ["add", "add_ret", "load", "store"])
+@pytest.mark.parametrize("memory_order", [-1, 0, 1, 2, 3, 4, 5, 6, "dynamic"])
+def test_ppu_scoped_atomic_raw_ir_order_validation(scope, operation, memory_order):
+    # Imported IR can bypass the Python API's validation.
     @T.prim_func
-    def kernel(data: T.Tensor((1,), T.int32)):
+    def kernel(data: T.Tensor((1,), T.int32), order: T.int32):
         with T.Kernel(1, threads=32):
             if T.get_thread_binding() == 0:
                 if operation == "load":
-                    data[0] = T.call_intrin("int32", Op.get("tl.atomic_load_elem_op"), T.access_ptr(data[0], "r"), memory_order, "system")
+                    data[0] = T.call_intrin(
+                        "int32",
+                        Op.get("tl.atomic_load_elem_op"),
+                        T.access_ptr(data[0], "r"),
+                        order if memory_order == "dynamic" else memory_order,
+                        scope,
+                    )
+                elif operation == "add_ret":
+                    data[0] = T.call_intrin(
+                        "int32",
+                        Op.get("tl.atomic_add_ret_elem_op"),
+                        T.access_ptr(data[0], "rw"),
+                        1,
+                        order if memory_order == "dynamic" else memory_order,
+                        scope,
+                    )
                 else:
                     T.evaluate(
                         T.call_intrin(
-                            "handle", Op.get(f"tl.atomic_{operation}_elem_op"), T.access_ptr(data[0], "rw"), 1, memory_order, "system"
+                            "handle",
+                            Op.get(f"tl.atomic_{operation}_elem_op"),
+                            T.access_ptr(data[0], "rw"),
+                            1,
+                            order if memory_order == "dynamic" else memory_order,
+                            scope,
                         )
                     )
 
-    with pytest.raises(InternalError, match="received invalid memory_order"):
-        tilelang.lower(kernel, target=PPU_TARGET, enable_device_compile=False)
+    valid_orders = {"add": {0, 1, 2, 3, 4, 5}, "add_ret": {0, 1, 2, 3, 4, 5}, "load": {0, 1, 2, 5}, "store": {0, 3, 5}}
+    if memory_order in valid_orders[operation]:
+        source = tilelang.lower(kernel, target=PPU_TARGET, enable_device_compile=False).kernel_source
+        if scope == "system":
+            helper = "PPUSystemAtomic" + ("Add" if operation == "add_ret" else operation.capitalize())
+        elif operation in ("add", "add_ret"):
+            helper = "PPUBlockAtomicAdd"
+        else:
+            helper = f"Atomic{operation.capitalize()}<hggc::thread_scope_block>"
+        assert helper in source
+    else:
+        message = "memory_order must be a compile-time integer constant" if memory_order == "dynamic" else "received invalid memory_order"
+        with pytest.raises(InternalError, match=message):
+            tilelang.lower(kernel, target=PPU_TARGET, enable_device_compile=False)
 
 
 @tilelang.testing.requires_ppu

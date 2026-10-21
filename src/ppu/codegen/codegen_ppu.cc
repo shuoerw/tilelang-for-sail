@@ -61,11 +61,11 @@ std::optional<DataType> GetAccessPtrElementType(const PrimExpr &expr) {
   return std::nullopt;
 }
 
-enum class PPUSystemAtomicKind { kAdd, kLoad, kStore };
+enum class PPUAtomicKind { kAdd, kLoad, kStore };
 
-void ValidatePPUSystemAtomic(const CallNode *call, size_t order_arg,
-                             PPUSystemAtomicKind kind, const char *operation) {
-  auto element_type = GetAccessPtrElementType(call->args[0]);
+void ValidatePPUAtomicType(const PrimExpr &pointer,
+                           const std::string &operation) {
+  auto element_type = GetAccessPtrElementType(pointer);
   ICHECK(element_type.has_value())
       << operation
       << " expects an address_of, tl.access_ptr, or tvm_access_ptr operand";
@@ -77,41 +77,29 @@ void ValidatePPUSystemAtomic(const CallNode *call, size_t order_arg,
           element_type->is_float()))
       << operation << " supports 32/64-bit integers or floats, got "
       << element_type.value();
+}
 
-  const int64_t *memory_order = as_const_int(call->args[order_arg]);
+void ValidatePPUAtomicOrder(const PrimExpr &order, PPUAtomicKind kind,
+                            const std::string &operation) {
+  const int64_t *memory_order = as_const_int(order);
   ICHECK(memory_order)
       << operation << " memory_order must be a compile-time integer constant";
 
   bool valid = false;
   switch (kind) {
-  case PPUSystemAtomicKind::kAdd:
+  case PPUAtomicKind::kAdd:
     valid = *memory_order >= 0 && *memory_order <= 5;
     break;
-  case PPUSystemAtomicKind::kLoad:
+  case PPUAtomicKind::kLoad:
     valid = *memory_order == 0 || *memory_order == 1 || *memory_order == 2 ||
             *memory_order == 5;
     break;
-  case PPUSystemAtomicKind::kStore:
+  case PPUAtomicKind::kStore:
     valid = *memory_order == 0 || *memory_order == 3 || *memory_order == 5;
     break;
   }
   ICHECK(valid) << operation
                 << " received invalid memory_order=" << *memory_order;
-}
-
-void ValidatePPUBlockAtomicAdd(const CallNode *call) {
-  auto dtype = GetAccessPtrElementType(call->args[0]);
-  ICHECK(dtype.has_value())
-      << "PPU block-scope atomic_add requires an access pointer";
-  ICHECK(dtype->lanes() == 1 && (dtype->bits() == 32 || dtype->bits() == 64) &&
-         (dtype->is_int() || dtype->is_uint() || dtype->is_float()))
-      << "PPU block-scope atomic_add supports scalar 32/64-bit integers or "
-         "floats, got "
-      << dtype.value();
-  const int64_t *order = as_const_int(call->args[2]);
-  ICHECK(order && *order >= 0 && *order <= 5)
-      << "PPU block-scope atomic_add received invalid memory_order="
-      << call->args[2];
 }
 
 int GetTileLangCPAsyncTransferBytes(const CallNode *op) {
@@ -3752,12 +3740,10 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     // atomic_add_elem_op(dst_ptr, src_value[, memory_order[, scope]])
     const std::string scope = tl::GetAtomicScope(op);
     const bool system_scope = scope == "system";
-    if (scope == "block") {
-      ValidatePPUBlockAtomicAdd(op);
-    }
-    if (system_scope) {
-      ValidatePPUSystemAtomic(op, 2, PPUSystemAtomicKind::kAdd,
-                              "PPU system-scope atomic_add");
+    if (scope != "device") {
+      const std::string operation = "PPU " + scope + "-scope atomic_add";
+      ValidatePPUAtomicType(op->args[0], operation);
+      ValidatePPUAtomicOrder(op->args[2], PPUAtomicKind::kAdd, operation);
     }
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string src_value = PrintExpr(op->args[1]);
@@ -3780,12 +3766,10 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     const std::string scope = tl::GetAtomicScope(op);
     const bool block_scope = scope == "block";
     const bool system_scope = scope == "system";
-    if (block_scope) {
-      ValidatePPUBlockAtomicAdd(op);
-    }
-    if (system_scope) {
-      ValidatePPUSystemAtomic(op, 2, PPUSystemAtomicKind::kAdd,
-                              "PPU system-scope atomic_add");
+    if (scope != "device") {
+      const std::string operation = "PPU " + scope + "-scope atomic_add";
+      ValidatePPUAtomicType(op->args[0], operation);
+      ValidatePPUAtomicOrder(op->args[2], PPUAtomicKind::kAdd, operation);
     }
     os << (system_scope  ? "PPUSystemAtomicAdd("
            : block_scope ? "PPUBlockAtomicAdd("
@@ -3823,9 +3807,12 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     // value
     const std::string scope = tl::GetAtomicScope(op);
     const bool system_scope = scope == "system";
-    if (system_scope) {
-      ValidatePPUSystemAtomic(op, 1, PPUSystemAtomicKind::kLoad,
-                              "PPU system-scope atomic_load");
+    if (scope != "device") {
+      const std::string operation = "PPU " + scope + "-scope atomic_load";
+      if (system_scope) {
+        ValidatePPUAtomicType(op->args[0], operation);
+      }
+      ValidatePPUAtomicOrder(op->args[1], PPUAtomicKind::kLoad, operation);
     }
     std::string src_ptr = PrintExpr(op->args[0]);
     std::string memory_order = PrintExpr(op->args[1]);
@@ -3838,9 +3825,12 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     // atomic_store_elem_op(dst_ptr, value, memory_order[, scope])
     const std::string scope = tl::GetAtomicScope(op);
     const bool system_scope = scope == "system";
-    if (system_scope) {
-      ValidatePPUSystemAtomic(op, 2, PPUSystemAtomicKind::kStore,
-                              "PPU system-scope atomic_store");
+    if (scope != "device") {
+      const std::string operation = "PPU " + scope + "-scope atomic_store";
+      if (system_scope) {
+        ValidatePPUAtomicType(op->args[0], operation);
+      }
+      ValidatePPUAtomicOrder(op->args[2], PPUAtomicKind::kStore, operation);
     }
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string value = PrintExpr(op->args[1]);

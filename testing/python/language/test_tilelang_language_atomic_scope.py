@@ -247,3 +247,37 @@ def test_system_atomic_accepts_supported_types(operation, dtype):
     validate_atomic_scopes(_module(buffer, tirx.Evaluate(call)), Target({"kind": "ppu", "arch": "ppu_15"}))
     if operation in ("add_ret", "load"):
         assert str(call.dtype) == dtype
+
+
+@pytest.mark.parametrize("scope", ["block", "system"])
+@pytest.mark.parametrize("operation", ["add", "add_ret", "load", "store"])
+@pytest.mark.parametrize("memory_order", ["relaxed", "consume", "acquire", "release", "acq_rel", "seq_cst", "invalid", 6])
+def test_scoped_atomic_operation_orders(scope, operation, memory_order):
+    valid_orders = {
+        "add": {"relaxed", "consume", "acquire", "release", "acq_rel", "seq_cst"},
+        "add_ret": {"relaxed", "consume", "acquire", "release", "acq_rel", "seq_cst"},
+        "load": {"relaxed", "consume", "acquire", "seq_cst"},
+        "store": {"relaxed", "release", "seq_cst"},
+    }
+    buffer = tirx.decl_buffer((1,), "int32")
+    atomic = getattr(T, f"atomic_{'add' if operation == 'add_ret' else operation}")
+    args = [buffer[0]] if operation == "load" else [buffer[0], 1]
+    kwargs = {"return_prev": operation == "add_ret"} if operation in ("add", "add_ret") else {}
+    if memory_order in valid_orders[operation]:
+        call = atomic(*args, memory_order=memory_order, scope=scope, **kwargs)
+        expected_id = ["relaxed", "consume", "acquire", "release", "acq_rel", "seq_cst"].index(memory_order)
+        assert int(call.args[-2]) == expected_id
+        assert call.args[-1].value == scope
+    else:
+        with pytest.raises(ValueError, match=f"{scope}-scope atomic_.* does not support memory_order"):
+            atomic(*args, memory_order=memory_order, scope=scope, **kwargs)
+
+
+@pytest.mark.parametrize("operation", ["load", "store"])
+@pytest.mark.parametrize("dtype", ["int8", "int16", "float16"])
+def test_block_atomic_load_store_preserves_type_acceptance(operation, dtype):
+    buffer = tirx.decl_buffer((1,), dtype)
+    call = _atomic_call(operation, buffer, scope="block")
+    assert call.args[-1].value == "block"
+    if operation == "load":
+        assert str(call.dtype) == dtype
