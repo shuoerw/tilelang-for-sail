@@ -103,3 +103,64 @@ if(USE_PPU AND NOT USE_CUDA AND EXISTS "${tvm_ffi_env_context}")
     message(STATUS "Patched env_context.cc: kDLCUDA -> kDLPPU stream redirect")
   endif()
 endif()
+
+# Scope positive loop-extent assumptions to the loop body, preserving zero-trip loops.
+# Backport: https://github.com/tile-ai/tvm/pull/86
+# Apache TVM source: 434dc7636e06c6c4a25eb1845869b596199c51bb
+function(tilelang_patch_tvm_loop_analysis relative_path before after)
+  set(source_file "${TVM_SOURCE}/${relative_path}")
+  file(READ "${source_file}" contents)
+  string(FIND "${contents}" "${after}" patched_position)
+  if(NOT patched_position EQUAL -1)
+    return()
+  endif()
+  string(FIND "${contents}" "${before}" original_position)
+  if(original_position EQUAL -1)
+    message(FATAL_ERROR
+      "Cannot apply TVM loop-analysis fix to ${source_file}: unexpected source. "
+      "Check compatibility with https://github.com/tile-ai/tvm/pull/86")
+  endif()
+  string(REPLACE "${before}" "${after}" contents "${contents}")
+  file(WRITE "${source_file}" "${contents}")
+  message(STATUS "Patched ${relative_path}: scope positive loop extents to the body")
+endfunction()
+
+tilelang_patch_tvm_loop_analysis("src/arith/ir_mutator_with_analyzer.cc"
+[=[    constraint_scope_.Current().Emplace(analyzer_, op->extent > 0);
+    return StmtExprMutator::VisitStmt_(op);]=]
+[=[
+
+    PrimExpr min = this->VisitExpr(op->min);
+    PrimExpr extent = this->VisitExpr(op->extent);
+    ffi::Optional<PrimExpr> step{std::nullopt};
+    if (op->step.has_value()) {
+      step = this->VisitExpr(*op->step);
+    }
+    Stmt body = constraint_scope_.WithNewScope([&]() -> Stmt {
+      constraint_scope_.Current().Emplace(analyzer_, extent > 0);
+      return this->VisitStmt(op->body);
+    });
+    if (min.same_as(op->min) && extent.same_as(op->extent) && body.same_as(op->body) &&
+        step.same_as(op->step)) {
+      return ffi::GetRef<Stmt>(op);
+    } else {
+      auto n = this->CopyOnWrite(op);
+      n->min = std::move(min);
+      n->extent = std::move(extent);
+      n->step = std::move(step);
+      n->body = std::move(body);
+      return Stmt(n);
+    }]=])
+
+tilelang_patch_tvm_loop_analysis("src/arith/ir_visitor_with_analyzer.cc"
+[=[    constraint_scope_.Current().Emplace(&analyzer_, op->extent > 0);
+    StmtExprVisitor::VisitStmt_(op);]=]
+[=[    this->VisitExpr(op->min);
+    this->VisitExpr(op->extent);
+    if (op->step.has_value()) {
+      this->VisitExpr(*op->step);
+    }
+    constraint_scope_.WithNewScope([&]() {
+      constraint_scope_.Current().Emplace(&analyzer_, op->extent > 0);
+      this->VisitStmt(op->body);
+    });]=])
