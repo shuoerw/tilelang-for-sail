@@ -90,10 +90,13 @@ static constexpr const char *kHasTMA = "tl.has_tma";
 // instructions that consume it (TMA bulk copy, wgmma/tcgen05 descriptors).
 // Keyed by name rather than Var so the attribute does not hold references
 // into the function body (which would perturb printing and SSA passes); a
-// name collision can only over-align, never under-align. LowerTileOp records
-// tile-op requirements; MergeSharedMemoryAllocations adds direct-intrinsic
-// requirements and merged allocation bases. PPU codegen consumes the map too.
+// name collision can only over-align, never under-align. Written by
+// LowerTileOp, consumed by MergeSharedMemoryAllocations.
 static constexpr const char *kSmemAlignmentMap = "tl.smem_alignment_map";
+// Minimum shared-memory alignment for an Op's pointer operands. Propagated
+// to AllocBuffer annotations so codegen also aligns the backing allocation.
+static constexpr const char *kRequiredSmemAlignment =
+    "tl.required_smem_alignment";
 static constexpr const char *kDisableSafeMemoryLegalize =
     "tl.disable_safe_memory_legalize";
 static constexpr const char *kDisableWarpSpecialized =

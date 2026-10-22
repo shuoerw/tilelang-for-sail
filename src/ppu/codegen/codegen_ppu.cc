@@ -3972,15 +3972,10 @@ void CodeGenTileLangPPU::VisitStmt_(const AllocBufferNode *op) {
         (alloc_dtype == DataType::Int(4) || alloc_dtype == DataType::UInt(4)) &&
         alloc_dtype.is_scalar() && scope == "local";
     if (!is_fp4_scalar_local && !is_int4_scalar_local) {
-      auto alignment = smem_alignment_map_.Get(op->buffer->data->name_hint);
-      if ((scope == "shared" || scope == "shared.dyn") && alignment.has_value()) {
-        int64_t minimum =
-            scope == "shared.dyn" ? 1024 : barrier_alignment_bytes_;
-        if (scope == "shared.dyn") {
-          stream << "extern ";
-        }
+      auto alignment = op->annotations.find(tl::kRequiredSmemAlignment);
+      if (scope == "shared" && alignment != op->annotations.end()) {
         stream << "__shared__ __align__("
-               << std::max(minimum, alignment.value()->value) << ") ";
+               << Downcast<Integer>((*alignment).second)->value << ") ";
       } else {
         PrintStorageScope(scope, stream);
       }
@@ -4971,8 +4966,6 @@ void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar, const PrimFunc &f) {
   CodeGenC::DeclareFunction(gvar, f);
   // clear previous generated state.
   this->InitFuncState(f);
-  smem_alignment_map_ = f->GetAttr<Map<String, IntImm>>(tl::kSmemAlignmentMap)
-                            .value_or(Map<String, IntImm>());
   // reserve keywords
   ReserveKeywordsAsUnique_();
 

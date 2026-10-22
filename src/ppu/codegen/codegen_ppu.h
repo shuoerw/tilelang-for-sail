@@ -90,9 +90,6 @@ private:
   friend void PrintConst(const FloatImmNode *op, std::ostream &os,
                          CodeGenTileLangPPU *p);
 
-  // Per-allocation byte alignments carried by the PrimFunc alignment map.
-  ffi::Map<ffi::String, IntImm> smem_alignment_map_;
-
   // Global acrand state
   std::string acrand_random_generator_state;
   std::string acrand_random_generator_state_type;
