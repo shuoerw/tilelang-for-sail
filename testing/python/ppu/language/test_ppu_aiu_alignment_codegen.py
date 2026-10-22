@@ -39,8 +39,9 @@ def test_shared_alignment_codegen(scope, merge, use_aiu):
             if tx == 0:
                 dst[128] = a_pad[15]
 
-    with tvm.transform.PassContext(config={"tirx.merge_static_smem": merge}):
-        source = tilelang.lower(kernel, target={"kind": "ppu", "arch": "ppu_15"}, enable_device_compile=False).kernel_source
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+    with target, tvm.transform.PassContext(config={"tirx.merge_static_smem": merge}):
+        source = tilelang.lower(kernel, target=target, enable_device_compile=False).kernel_source
     assert ("tl::aiu_load" in source) == use_aiu
     alignment = 128 if use_aiu else 16
     if scope == "shared" and not merge:

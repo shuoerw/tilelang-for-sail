@@ -369,6 +369,7 @@ def test_pipeline_aiu_loads_retain_group_ownership(monkeypatch, num_stages, bloc
         return check
 
     monkeypatch.setattr(tilelang.ppu.transform, "InjectAIUSyncBarrier", checked_factory)
-    with tvm.transform.PassContext(config={"tl.disable_aiu_lower": False}):
-        tilelang.lower(kernel, target={"kind": "ppu", "arch": "ppu_15"}, enable_device_compile=False)
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+    with target, tvm.transform.PassContext(config={"tl.disable_aiu_lower": False}):
+        tilelang.lower(kernel, target=target, enable_device_compile=False)
     assert checked
