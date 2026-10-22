@@ -640,10 +640,13 @@ std::string GetAtomicScope(const CallNode *call) {
     return "device";
   }
   const size_t scope_index = is_load ? 2 : 3;
+  const size_t min_args = call->op.same_as(atomic_store_elem_op()) ? 3 : 2;
+  ICHECK(call->args.size() >= min_args && call->args.size() <= scope_index + 1)
+      << call->op << " expects " << min_args << " to " << scope_index + 1
+      << " arguments, got " << call->args.size();
   if (call->args.size() <= scope_index) {
     return "device";
   }
-  ICHECK_EQ(call->args.size(), scope_index + 1);
   const auto *scope = call->args[scope_index].as<StringImmNode>();
   ICHECK(scope && (scope->value == "block" || scope->value == "device" ||
                    scope->value == "system"))

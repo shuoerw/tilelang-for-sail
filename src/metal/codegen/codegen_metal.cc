@@ -33,7 +33,9 @@
 #include <unordered_map>
 #include <utility>
 
+#include "op/builtin.h"
 #include "runtime/thread_storage_scope.h"
+#include "support/check.h"
 #include "target/build_common.h"
 #include "target/metal/metal_fallback_module.h"
 
@@ -417,6 +419,8 @@ void CodeGenTileLangMetal::VisitExpr_(const BroadcastNode *op,
 
 void CodeGenTileLangMetal::VisitExpr_(const CallNode *op,
                                       std::ostream &os) { // NOLINT(*)
+  ICHECK(tl::GetAtomicScope(op) == "device")
+      << "Non-device-scope atomics are not implemented by the Metal backend";
   TVM_FFI_ICHECK(!op->op.as<GlobalVarNode>())
       << "CodegenMetal does not support inter-function calls, "
       << "but expression " << ffi::GetRef<Call>(op) << " calls PrimFunc "
