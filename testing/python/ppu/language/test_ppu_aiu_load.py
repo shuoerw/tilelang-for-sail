@@ -436,7 +436,7 @@ def test_ppu_aiu_load_shared_alignment(scope, merge_static):
         ).kernel_source
     if scope == "shared" and not merge_static:
         assert re.search(r"__shared__\s+__align__\(128\)\s+(?:uint8_t|uchar)\s+shared\[128\]", source)
-        assert re.search(r"__shared__\s+__align__\(16\)\s+(?:uint8_t|uchar)\s+pad\[16\]", source)
+        assert re.search(r"__shared__\s+__align__\(128\)\s+(?:uint8_t|uchar)\s+pad\[16\]", source)
     else:
         match = re.search(r"void\*\s+shared\s*=.*?buf_(?:dyn_)?shmem\s*\+\s*(\d+)", source)
         assert match is not None, source

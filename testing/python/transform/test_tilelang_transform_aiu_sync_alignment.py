@@ -249,8 +249,13 @@ def test_bound_aiu_destination_alignment(scope, merge, binding):
     tx = tvm.te.thread_axis("threadIdx.x")
     body = tir.AttrStmt(tx, "thread_extent", 32, tir.SeqStmt(stmts))
     func = tir.PrimFunc([src], body)
+    from tilelang.ppu.pipeline import _AlignAIUSharedMemory
+
+    mod = _AlignAIUSharedMemory(tvm.IRModule({"main": func}))
+    assert int(mod["main"].attrs["tl.smem_alignment_map"][shared.data.name]) == 128
+    assert int(mod["main"].attrs["tl.smem_alignment_map"][pad.data.name]) == 128
     with tvm.transform.PassContext(config={"tirx.merge_static_smem": merge}):
-        result = tilelang.transform.MergeSharedMemoryAllocations(disable_reuse=True)(tvm.IRModule({"main": func}))["main"]
+        result = tilelang.transform.MergeSharedMemoryAllocations(disable_reuse=True)(mod)["main"]
     allocations = []
     bindings = []
 
@@ -263,16 +268,15 @@ def test_bound_aiu_destination_alignment(scope, merge, binding):
     tir.stmt_functor.post_order_visit(result.body, collect)
     if scope == "shared" and not merge:
         alloc = next(a for a in allocations if a.buffer.data.same_as(shared.data))
-        assert int(alloc.annotations.get("tl.required_smem_alignment", 0)) >= 128
+        assert int(alloc.buffer.shape[0]) == 128
         pad_alloc = next(a for a in allocations if a.buffer.data.same_as(pad.data))
-        assert int(pad_alloc.annotations.get("tl.required_smem_alignment", 0)) == 0
+        assert int(pad_alloc.buffer.shape[0]) == 16
     else:
         alias = next(b for b in bindings if b.var.same_as(shared.data))
         assert alias.value.op.name == "tirx.handle_add_byte_offset"
         offset = int(tvm.arith.Analyzer().simplify(alias.value.args[1]))
         assert offset >= 16 and offset % 128 == 0
-        if scope == "shared":
-            assert int(allocations[0].annotations.get("tl.required_smem_alignment", 0)) >= 128
+        assert int(allocations[0].buffer.shape[0]) == 256
 
 
 @pytest.mark.parametrize("scope", ["async_scope", "async_commit_queue_scope"])

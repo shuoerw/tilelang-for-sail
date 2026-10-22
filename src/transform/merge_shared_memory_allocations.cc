@@ -375,12 +375,10 @@ public:
   // explicit entry.
   static std::unordered_map<const VarNode *, int>
   Plan(const Stmt &stmt,
-       const std::unordered_map<const VarNode *, int> &explicit_alignments,
-       bool include_implicit_alignment = true) {
+       const std::unordered_map<const VarNode *, int> &explicit_alignments) {
     SharedMemoryAlignmentPlanner planner;
     planner.shmem_alignment_map_ = explicit_alignments;
     planner.explicit_alignment_map_ = &explicit_alignments;
-    planner.include_implicit_alignment_ = include_implicit_alignment;
     planner(stmt);
     return planner.shmem_alignment_map_;
   }
@@ -389,18 +387,13 @@ private:
   // Helper to record alignment for a shared/shared.dyn Var under alignment
   // scope
   void MarkSharedVarIfNeeded(const VarNode *op) {
-    if (!op || (!under_alignment_scope_ && required_alignment_ == 0))
+    if (!op || !under_alignment_scope_)
       return;
     auto ptr_type = op->type_annotation.as<PointerTypeNode>();
     if (!ptr_type)
       return;
     auto scope = GetPtrStorageScope(GetRef<Var>(op));
     if (scope == "shared" || scope == "shared.dyn") {
-      if (required_alignment_ != 0) {
-        int &slot = shmem_alignment_map_[op];
-        slot = std::max(slot, required_alignment_);
-        return;
-      }
       // An explicit requirement recorded at lowering time is exact; keep it.
       if (explicit_alignment_map_->count(op))
         return;
@@ -416,26 +409,10 @@ private:
   }
 
   void VisitExpr_(const CallNode *op) {
-    if (auto optional_op = op->op.as<Op>();
-        optional_op && Op::HasAttrMap(kRequiredSmemAlignment)) {
-      auto required_smem_alignment =
-          Op::GetAttrMap<Integer>(kRequiredSmemAlignment);
-      const Op &call_op = optional_op.value();
-      if (required_smem_alignment.count(call_op)) {
-        int previous_alignment = required_alignment_;
-        required_alignment_ =
-            std::max(required_alignment_,
-                     static_cast<int>(required_smem_alignment[call_op]->value));
-        StmtExprVisitor::VisitExpr_(op);
-        required_alignment_ = previous_alignment;
-        return;
-      }
-    }
-
-    if (include_implicit_alignment_ &&
-        (op->op.same_as(tl::tma_load()) || op->op.same_as(tl::tma_store()) ||
-         op->op.same_as(tl::initialize_wgmma_descriptor()) ||
-         op->op.same_as(tl::initialize_tcgen05_descriptor()))) {
+    if (op->op.same_as(tl::tma_load()) || op->op.same_as(tl::tma_store()) ||
+        op->op.same_as(tl::ppu_aiu_load()) ||
+        op->op.same_as(tl::initialize_wgmma_descriptor()) ||
+        op->op.same_as(tl::initialize_tcgen05_descriptor())) {
       // These intrinsics introduce stricter SMEM alignment requirements; mark
       // the subtree.
       under_alignment_scope_ = true;
@@ -446,73 +423,26 @@ private:
     }
   }
 
-  void VisitStmt_(const BindNode *op) final {
-    VisitExpr(op->value);
-    if (op->var.dtype().is_handle()) {
-      pointer_bindings_[op->var.get()] = op->value;
-    }
-  }
-
-  void VisitExpr_(const LetNode *op) final {
-    VisitExpr(op->value);
-    if (op->var.dtype().is_handle()) {
-      pointer_bindings_[op->var.get()] = op->value;
-    }
-    VisitExpr(op->body);
-    pointer_bindings_.erase(op->var.get());
-  }
-
-  void VisitExpr_(const VarNode *op) final {
-    if (under_alignment_scope_ || required_alignment_ != 0) {
-      auto binding = pointer_bindings_.find(op);
-      if (binding != pointer_bindings_.end()) {
-        // Revisit the pointer expression under the consuming instruction's
-        // alignment requirement, including chains of pointer bindings.
-        VisitExpr(binding->second);
-        return;
-      }
-    }
+  void VisitExpr_(const VarNode *op) {
     MarkSharedVarIfNeeded(op);
+    StmtExprVisitor::VisitExpr_(op);
   }
 
   void VisitExpr_(const BufferLoadNode *op) {
     // If we encounter address_of(BufferLoad(...)) or any direct BufferLoad
     // within an alignment scope, make sure we mark the underlying shared var.
-    if (op && (under_alignment_scope_ || required_alignment_ != 0)) {
+    if (op && under_alignment_scope_) {
       const VarNode *data_var = op->buffer->data.get();
       MarkSharedVarIfNeeded(data_var);
     }
     StmtExprVisitor::VisitExpr_(op);
   }
 
-  std::unordered_map<const VarNode *, PrimExpr> pointer_bindings_;
   bool under_alignment_scope_{false};
-  bool include_implicit_alignment_{true};
-  int required_alignment_{0};
 
   const std::unordered_map<const VarNode *, int> *explicit_alignment_map_{
       nullptr};
   std::unordered_map<const VarNode *, int> shmem_alignment_map_;
-};
-
-class SharedMemoryAlignmentAnnotator : public StmtExprMutator {
-public:
-  explicit SharedMemoryAlignmentAnnotator(const Stmt &stmt)
-      : alignments_(SharedMemoryAlignmentPlanner::Plan(
-            stmt, {}, /*include_implicit_alignment=*/false)) {}
-
-private:
-  Stmt VisitStmt_(const AllocBufferNode *op) final {
-    auto alignment = alignments_.find(op->buffer->data.get());
-    auto alloc = GetRef<AllocBuffer>(op);
-    if (alignment != alignments_.end() && op->buffer.scope() == "shared") {
-      alloc.CopyOnWrite()->annotations.Set(kRequiredSmemAlignment,
-                                           Integer(alignment->second));
-    }
-    return alloc;
-  }
-
-  std::unordered_map<const VarNode *, int> alignments_;
 };
 
 /*!
@@ -558,8 +488,8 @@ public:
     }
     // Post-condition: every buffer with an alignment requirement must have
     // been placed on a conforming offset. A violation here would surface as
-    // a device fault or silent data corruption at runtime, so fail loudly at
-    // compile time instead.
+    // silent data corruption at runtime (TMA/MMA swizzle phase mismatch), so
+    // fail loudly at compile time instead.
     for (const auto &[var, required] : shmem_alignment_map_) {
       auto offset_it = buffer_byte_offsets_.find(var);
       if (offset_it == buffer_byte_offsets_.end())
@@ -568,7 +498,7 @@ public:
         ICHECK_EQ(imm->value % required, 0)
             << "Shared memory buffer " << var->name_hint << " placed at byte "
             << "offset " << imm->value << ", which violates its required "
-            << required << "-byte alignment";
+            << required << "-byte alignment (TMA/MMA swizzle constraint)";
       }
     }
   }
@@ -721,22 +651,7 @@ private:
                         {merged_alloc_size_}, {}, PrimExpr(),
                         merged_buf_var_->name_hint, 0, 0, kDefault);
       Array<Stmt> seq;
-      Map<String, Any> annotations;
-      if (!is_dynamic_) {
-        int alignment = 0;
-        for (const auto &[var, alloc] : shmem_allocs_) {
-          auto required = alloc->annotations.find(kRequiredSmemAlignment);
-          if (required != alloc->annotations.end()) {
-            alignment = std::max(
-                alignment,
-                static_cast<int>(Downcast<Integer>((*required).second)->value));
-          }
-        }
-        if (alignment != 0) {
-          annotations.Set(kRequiredSmemAlignment, Integer(alignment));
-        }
-      }
-      seq.push_back(AllocBuffer(merged_buf, annotations));
+      seq.push_back(AllocBuffer(merged_buf));
       if (preserve_aliases_) {
         for (const Stmt &alias_binding : MakeAliasBindings()) {
           seq.push_back(alias_binding);
@@ -1699,10 +1614,6 @@ Stmt MergeSharedMemoryAllocations(Stmt stmt, bool merge_static_smem,
                                   bool disable_reuse = false,
                                   const std::unordered_map<std::string, int>
                                       &explicit_alignments_by_name = {}) {
-  if (Op::HasAttrMap(kRequiredSmemAlignment)) {
-    SharedMemoryAlignmentAnnotator annotator(stmt);
-    stmt = annotator(std::move(stmt));
-  }
   AllocateCollector collector;
   collector(stmt);
   // The kSmemAlignmentMap attribute is keyed by buffer-var name (names are

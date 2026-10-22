@@ -1466,11 +1466,14 @@ void CodeGenTileLangPPU::PrintStorageScope(const std::string &scope,
   ICHECK_NE(scope, "global")
       << "Cannot allocate global memory when targeting HGGC. You must pass "
          "all global arrays as input instead";
-  if (scope == "shared" || scope == "shared.barrier" ||
-      scope == "shared.cluster_barrier") {
+  if (scope == "shared") {
+    os << "__shared__ __align__("
+       << std::max(barrier_alignment_bytes_, aiu_smem_alignment_) << ") ";
+  } else if (scope == "shared.barrier" || scope == "shared.cluster_barrier") {
     os << "__shared__ __align__(" << barrier_alignment_bytes_ << ") ";
   } else if (scope == "shared.dyn") {
-    os << "extern __shared__ __align__(1024) ";
+    os << "extern __shared__ __align__(" << std::max(1024, aiu_smem_alignment_)
+       << ") ";
   }
 }
 
@@ -3972,13 +3975,7 @@ void CodeGenTileLangPPU::VisitStmt_(const AllocBufferNode *op) {
         (alloc_dtype == DataType::Int(4) || alloc_dtype == DataType::UInt(4)) &&
         alloc_dtype.is_scalar() && scope == "local";
     if (!is_fp4_scalar_local && !is_int4_scalar_local) {
-      auto alignment = op->annotations.find(tl::kRequiredSmemAlignment);
-      if (scope == "shared" && alignment != op->annotations.end()) {
-        stream << "__shared__ __align__("
-               << Downcast<Integer>((*alignment).second)->value << ") ";
-      } else {
-        PrintStorageScope(scope, stream);
-      }
+      PrintStorageScope(scope, stream);
       if (is_float4_unpacked_shared) {
         stream << "uint8_t";
       } else {
@@ -4966,6 +4963,22 @@ void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar, const PrimFunc &f) {
   CodeGenC::DeclareFunction(gvar, f);
   // clear previous generated state.
   this->InitFuncState(f);
+  aiu_smem_alignment_ = 0;
+  tirx::PostOrderVisit(f->body, [this](const ObjectRef &node) {
+    if (const auto *call = node.as<CallNode>();
+        call && call->op.same_as(tl::ppu_aiu_load())) {
+      aiu_smem_alignment_ = 128;
+    }
+  });
+  if (aiu_smem_alignment_ != 0) {
+    if (auto alignments =
+            f->GetAttr<Map<String, IntImm>>(tl::kSmemAlignmentMap)) {
+      for (const auto &[name, alignment] : alignments.value()) {
+        aiu_smem_alignment_ =
+            std::max(aiu_smem_alignment_, static_cast<int>(alignment->value));
+      }
+    }
+  }
   // reserve keywords
   ReserveKeywordsAsUnique_();
 
