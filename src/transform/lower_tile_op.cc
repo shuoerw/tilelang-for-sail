@@ -224,6 +224,9 @@ public:
   static PrimFunc Substitute(PrimFunc f) {
     arith::Analyzer analyzer;
     LowerTileOpPass substituter(&analyzer);
+    if (auto existing = f->GetAttr<Map<String, IntImm>>(kSmemAlignmentMap)) {
+      substituter.smem_alignment_map_ = existing.value();
+    }
     // Trace the buffer map for tvm_access_ptr
     // Insert both handle var and data var as keys for lookup
     for (const auto &[param_var, buffer] : f->buffer_map) {

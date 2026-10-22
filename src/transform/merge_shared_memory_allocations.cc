@@ -375,12 +375,10 @@ public:
   // explicit entry.
   static std::unordered_map<const VarNode *, int>
   Plan(const Stmt &stmt,
-       const std::unordered_map<const VarNode *, int> &explicit_alignments,
-       bool include_implicit_alignment = true) {
+       const std::unordered_map<const VarNode *, int> &explicit_alignments) {
     SharedMemoryAlignmentPlanner planner;
     planner.shmem_alignment_map_ = explicit_alignments;
     planner.explicit_alignment_map_ = &explicit_alignments;
-    planner.include_implicit_alignment_ = include_implicit_alignment;
     planner(stmt);
     return planner.shmem_alignment_map_;
   }
@@ -416,26 +414,20 @@ private:
   }
 
   void VisitExpr_(const CallNode *op) {
-    if (auto optional_op = op->op.as<Op>();
-        optional_op && Op::HasAttrMap(kRequiredSmemAlignment)) {
-      auto required_smem_alignment =
-          Op::GetAttrMap<Integer>(kRequiredSmemAlignment);
-      const Op &call_op = optional_op.value();
-      if (required_smem_alignment.count(call_op)) {
-        int previous_alignment = required_alignment_;
-        required_alignment_ =
-            std::max(required_alignment_,
-                     static_cast<int>(required_smem_alignment[call_op]->value));
-        StmtExprVisitor::VisitExpr_(op);
-        required_alignment_ = previous_alignment;
-        return;
-      }
+    if (op->op.same_as(tl::ppu_aiu_load())) {
+      // Direct AIU calls bypass tile-op lowering. Only their destination
+      // pointer requires 128-byte shared-memory alignment.
+      ICHECK(!op->args.empty());
+      int previous_alignment = required_alignment_;
+      required_alignment_ = std::max(required_alignment_, 128);
+      VisitExpr(op->args[0]);
+      required_alignment_ = previous_alignment;
+      return;
     }
 
-    if (include_implicit_alignment_ &&
-        (op->op.same_as(tl::tma_load()) || op->op.same_as(tl::tma_store()) ||
-         op->op.same_as(tl::initialize_wgmma_descriptor()) ||
-         op->op.same_as(tl::initialize_tcgen05_descriptor()))) {
+    if (op->op.same_as(tl::tma_load()) || op->op.same_as(tl::tma_store()) ||
+        op->op.same_as(tl::initialize_wgmma_descriptor()) ||
+        op->op.same_as(tl::initialize_tcgen05_descriptor())) {
       // These intrinsics introduce stricter SMEM alignment requirements; mark
       // the subtree.
       under_alignment_scope_ = true;
@@ -487,32 +479,11 @@ private:
 
   std::unordered_map<const VarNode *, PrimExpr> pointer_bindings_;
   bool under_alignment_scope_{false};
-  bool include_implicit_alignment_{true};
   int required_alignment_{0};
 
   const std::unordered_map<const VarNode *, int> *explicit_alignment_map_{
       nullptr};
   std::unordered_map<const VarNode *, int> shmem_alignment_map_;
-};
-
-class SharedMemoryAlignmentAnnotator : public StmtExprMutator {
-public:
-  explicit SharedMemoryAlignmentAnnotator(const Stmt &stmt)
-      : alignments_(SharedMemoryAlignmentPlanner::Plan(
-            stmt, {}, /*include_implicit_alignment=*/false)) {}
-
-private:
-  Stmt VisitStmt_(const AllocBufferNode *op) final {
-    auto alignment = alignments_.find(op->buffer->data.get());
-    auto alloc = GetRef<AllocBuffer>(op);
-    if (alignment != alignments_.end() && op->buffer.scope() == "shared") {
-      alloc.CopyOnWrite()->annotations.Set(kRequiredSmemAlignment,
-                                           Integer(alignment->second));
-    }
-    return alloc;
-  }
-
-  std::unordered_map<const VarNode *, int> alignments_;
 };
 
 /*!
@@ -531,6 +502,21 @@ public:
     if (!is_dynamic) {
       merged_buf_var_ =
           Var("buf_shmem", PointerType(PrimType(DataType::UInt(8)), "shared"));
+    }
+  }
+
+  void RecordMergedAlignment(
+      std::unordered_map<std::string, int> &alignments) const {
+    int required = 0;
+    for (const auto &[var, alloc] : shmem_allocs_) {
+      auto it = shmem_alignment_map_.find(var);
+      if (it != shmem_alignment_map_.end()) {
+        required = std::max(required, it->second);
+      }
+    }
+    if (required != 0) {
+      int &entry = alignments[std::string(merged_buf_var_->name_hint)];
+      entry = std::max(entry, required);
     }
   }
 
@@ -721,22 +707,7 @@ private:
                         {merged_alloc_size_}, {}, PrimExpr(),
                         merged_buf_var_->name_hint, 0, 0, kDefault);
       Array<Stmt> seq;
-      Map<String, Any> annotations;
-      if (!is_dynamic_) {
-        int alignment = 0;
-        for (const auto &[var, alloc] : shmem_allocs_) {
-          auto required = alloc->annotations.find(kRequiredSmemAlignment);
-          if (required != alloc->annotations.end()) {
-            alignment = std::max(
-                alignment,
-                static_cast<int>(Downcast<Integer>((*required).second)->value));
-          }
-        }
-        if (alignment != 0) {
-          annotations.Set(kRequiredSmemAlignment, Integer(alignment));
-        }
-      }
-      seq.push_back(AllocBuffer(merged_buf, annotations));
+      seq.push_back(AllocBuffer(merged_buf));
       if (preserve_aliases_) {
         for (const Stmt &alias_binding : MakeAliasBindings()) {
           seq.push_back(alias_binding);
@@ -1692,17 +1663,10 @@ private:
   bool preserve_aliases_{true};
 };
 
-Stmt MergeSharedMemoryAllocations(Stmt stmt, bool merge_static_smem,
-                                  bool enable_aggressive_merge,
-                                  int align_bytes = 16, bool verbose = false,
-                                  bool preserve_aliases = true,
-                                  bool disable_reuse = false,
-                                  const std::unordered_map<std::string, int>
-                                      &explicit_alignments_by_name = {}) {
-  if (Op::HasAttrMap(kRequiredSmemAlignment)) {
-    SharedMemoryAlignmentAnnotator annotator(stmt);
-    stmt = annotator(std::move(stmt));
-  }
+Stmt MergeSharedMemoryAllocations(
+    Stmt stmt, bool merge_static_smem, bool enable_aggressive_merge,
+    int align_bytes, bool verbose, bool preserve_aliases, bool disable_reuse,
+    std::unordered_map<std::string, int> &explicit_alignments_by_name) {
   AllocateCollector collector;
   collector(stmt);
   // The kSmemAlignmentMap attribute is keyed by buffer-var name (names are
@@ -1723,6 +1687,16 @@ Stmt MergeSharedMemoryAllocations(Stmt stmt, bool merge_static_smem,
         }
         return resolved;
       };
+  // Resolve both allocation kinds before planning, including allocations that
+  // will not be merged. This also discovers direct AIU pointer bindings.
+  auto known_alignments = resolve(collector.static_shmem_allocs_);
+  auto dynamic_alignments = resolve(collector.dyn_shmem_allocs_);
+  known_alignments.insert(dynamic_alignments.begin(), dynamic_alignments.end());
+  auto required = SharedMemoryAlignmentPlanner::Plan(stmt, known_alignments);
+  for (const auto &[var, alignment] : required) {
+    int &entry = explicit_alignments_by_name[std::string(var->name_hint)];
+    entry = std::max(entry, alignment);
+  }
   if (collector.dyn_shmem_allocs_.size() > 1) {
     SharedMemoryRewriter rewriter(collector.dyn_shmem_allocs_, true, verbose,
                                   align_bytes, preserve_aliases);
@@ -1730,6 +1704,7 @@ Stmt MergeSharedMemoryAllocations(Stmt stmt, bool merge_static_smem,
                        disable_reuse ? false : enable_aggressive_merge, false,
                        disable_reuse, resolve(collector.dyn_shmem_allocs_));
     stmt = rewriter(std::move(stmt));
+    rewriter.RecordMergedAlignment(explicit_alignments_by_name);
   }
   if (merge_static_smem && collector.static_shmem_allocs_.size() > 1) {
     SharedMemoryRewriter rewriter(collector.static_shmem_allocs_, false,
@@ -1738,6 +1713,7 @@ Stmt MergeSharedMemoryAllocations(Stmt stmt, bool merge_static_smem,
                        disable_reuse ? false : enable_aggressive_merge, false,
                        disable_reuse, resolve(collector.static_shmem_allocs_));
     stmt = rewriter(std::move(stmt));
+    rewriter.RecordMergedAlignment(explicit_alignments_by_name);
   }
   return stmt;
 }
@@ -1774,6 +1750,13 @@ Pass MergeSharedMemoryAllocations(bool enable_aggressive_merge = false,
         std::move(n->body), merge_static_smem, enable_aggressive_merge,
         align_bytes, debug_merge_shared_memory_allocations, preserve_aliases,
         disable_reuse, explicit_alignments);
+    if (!explicit_alignments.empty()) {
+      Map<String, IntImm> alignment_map;
+      for (const auto &[name, alignment] : explicit_alignments) {
+        alignment_map.Set(String(name), IntImm(DataType::Int(32), alignment));
+      }
+      f = WithAttr(std::move(f), kSmemAlignmentMap, alignment_map);
+    }
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tl.MergeSharedMemoryAllocations",

@@ -817,8 +817,7 @@ TIR_DEFINE_TL_BUILTIN(tma_store_cluster)
 TIR_DEFINE_TL_BUILTIN(ppu_aiu_load)
     .set_num_inputs(-1)
     .set_attr<TCallEffectKind>("TCallEffectKind",
-                               Integer(CallEffectKind::kOpaque))
-    .set_attr<Integer>(kRequiredSmemAlignment, Integer(128));
+                               Integer(CallEffectKind::kOpaque));
 
 TIR_DEFINE_TL_BUILTIN(tix_ldmatrix_swzl)
     .set_num_inputs(6)
