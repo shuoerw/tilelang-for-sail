@@ -91,7 +91,7 @@ matmul = _make_matmul(
     }
 )
 
-# Uses default pass_configs (TL_DISABLE_LDMAT_SWZL=True, swzl disabled)
+# Uses default pass_configs (TL_DISABLE_LDMAT_SWZL=False, swzl enabled on PPU15)
 matmul_default = _make_matmul()
 
 

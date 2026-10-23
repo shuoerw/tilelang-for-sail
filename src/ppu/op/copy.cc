@@ -41,10 +41,8 @@ using namespace tirx;
 using namespace ffi;
 
 namespace {
-constexpr int kBitsPerByte = 8;
 constexpr int kRegisterBits = 32;
 constexpr int kLdsmRowBits = 128;
-constexpr int kLdsmInstructionBits = 16;
 
 PrimExpr AiuBytesFromElements(PrimExpr elements, DataType dtype) {
   PrimExpr elements_i64 = cast(DataType::Int(64), elements);
@@ -607,17 +605,20 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
 
   Buffer shared_tensor = src;
   Buffer local_tensor = dst;
-  Array<Range> local_region = dst_range;
-  bool is_full_range = true;
-  for (size_t i = 0; i < local_region.size(); i++) {
-    if (!analyzer->CanProveEqual(local_region[i]->extent,
-                                 local_tensor->shape[i])) {
-      is_full_range = false;
-      break;
-    }
-  }
-  if (!is_full_range) {
+  const DataType dtype = shared_tensor->dtype;
+  const int shared_dtype_bits = dtype.bits();
+  const bool is_fp4 = dtype.is_float4_e2m1fn();
+  const bool is_b8 = shared_dtype_bits == 8 &&
+                     (dtype.is_int() || dtype.is_uint() || dtype.is_float8());
+  if (!dtype.is_scalar() || local_tensor->dtype != dtype ||
+      !(is_fp4 || is_b8 || shared_dtype_bits == 16)) {
     return LowerNormal(op, lower_args, analyzer);
+  }
+  for (size_t i = 0; i < dst_range.size(); ++i) {
+    if (!is_zero(dst_range[i]->min) ||
+        !analyzer->CanProveEqual(dst_range[i]->extent, dst->shape[i])) {
+      return LowerNormal(op, lower_args, analyzer);
+    }
   }
 
   Array<PrimExpr> local_indices = op.MakeIndices(loop_vars, 1);
@@ -632,18 +633,13 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
 
   Array<PrimExpr> shared_indices = op.MakeIndices(loop_vars, 0);
   bool is_transposed;
-  const int shared_dtype_bits = shared_tensor->dtype.bits();
-  bool is_fp4 = shared_dtype_bits == 4;
-  bool is_b8 = !is_fp4 && shared_tensor->dtype.bytes() == 1;
   IterVar col_var = loop_vars[loop_vars.size() - 1];
   IterVar row_var = loop_vars[loop_vars.size() - 2];
   PrimExpr local_layout_thread_map =
       FloorMod(local_layout->ForwardThread(local_indices, std::nullopt), 32);
   PrimExpr local_indices_flattened =
       local_tensor.OffsetOf(local_indices_transformed).back();
-  if (is_b8 && shared_tensor->dtype.lanes() == 1 &&
-      local_tensor->dtype == shared_tensor->dtype &&
-      TargetHasAiuCopy(lower_args.target)) {
+  if (is_b8 && TargetHasAiuCopy(lower_args.target)) {
     // PPU0015 ldmatrix.x2.trans.m16n16.shared.b8 loads 16 int8 per 16-byte
     // row. Validate the common copy constraints once before matching the A/B
     // register order. If any gate fails the copy falls through to the 8x16
@@ -661,9 +657,6 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
       }
       std::vector<size_t> varying_dims;
       for (size_t i = 0; i < dst_range.size(); ++i) {
-        if (!is_zero(dst_range[i]->min)) {
-          return std::nullopt;
-        }
         if (!is_one(dst_range[i]->extent)) {
           varying_dims.push_back(i);
         }
@@ -856,12 +849,6 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
       return LowerNormal(op, lower_args, analyzer);
     }
   }
-  const int shared_elem_bytes =
-      is_b8 || is_fp4 ? (shared_dtype_bits + kBitsPerByte - 1) / kBitsPerByte
-                      : kLdsmInstructionBits / kBitsPerByte;
-  if (shared_tensor->dtype.bytes() != shared_elem_bytes) {
-    return LowerNormal(op, lower_args, analyzer);
-  }
   const int elems_per_reg = kRegisterBits / shared_dtype_bits;
   PrimExpr flattened_indice = shared_tensor.OffsetOf(shared_indices).back();
   // ldmatrix reads 128 bits per row: 8 b16 elements or 16 int8 elements
@@ -870,12 +857,6 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
                            loop_vars.back()->dom->extent, smem_vectorize_factor,
                            analyzer)) {
     return LowerNormal(op, lower_args, analyzer);
-  }
-
-  for (size_t i = 0; i < dst_range.size(); i++) {
-    if (!is_zero(dst_range[i]->min) ||
-        !analyzer->CanProveEqual(dst_range[i]->extent, dst->shape[i]))
-      return LowerNormal(op, lower_args, analyzer);
   }
 
   PrimExpr extent = local_tensor->shape[0];
@@ -890,10 +871,6 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
     return LowerNormal(op, lower_args, analyzer);
   }
 
-  if (local_tensor->dtype != shared_tensor->dtype) {
-    return LowerNormal(op, lower_args, analyzer);
-  }
-
   // --- Swzl path: PPU0015 + swizzled shared layout + num==4 ---
   // The bulk-tensor swzl ldmatrix reads a warp-uniform base address and
   // de-swizzles in hardware, so all dynamic addressing (warp base, iteration,
@@ -901,8 +878,13 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
   // PPULowerTileOp rewrites the access_ptr through the swizzle layout and
   // binds the thread term to the warp base (same treatment as the gemm macros).
   auto try_swzl_ldmatrix = [&]() -> Optional<Stmt> {
+    if (tvm::transform::PassContext::Current()
+            ->GetConfig<Bool>(kDisableLdmatSwzl, Bool(false))
+            .value()) {
+      return std::nullopt;
+    }
     if (num != 4 || (is_transposed && shared_dtype_bits != 16) ||
-        !TargetHasAiuCopy(lower_args.target))
+        !TargetPPUHasLdmatrixSwzl(lower_args.target))
       return std::nullopt;
     size_t shared_ndim = shared_tensor->shape.size();
     if (shared_ndim < 2)
@@ -1086,9 +1068,9 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
   //   1. Prepend leading dimensions from the copy's range (stage index).
   //   2. Add slice offsets (range.min) to each spatial coordinate.
   {
-    ICHECK(src_range.size() >= shared_tensor->shape.size())
-        << "src_range dims (" << src_range.size() << ") < shared_tensor dims ("
-        << shared_tensor->shape.size() << ")";
+    if (shared_coords.size() > shared_tensor->shape.size()) {
+      return LowerNormal(op, lower_args, analyzer);
+    }
     Array<PrimExpr> full_coords;
     size_t leading = shared_tensor->shape.size() - shared_coords.size();
     for (size_t i = 0; i < leading; ++i) {
@@ -1107,9 +1089,6 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
             PrimExpr(elems_per_reg * num), make_const(DataType::Int(32), 1)});
   args.push_back(shared_addr);
 
-  if (local_tensor->dtype != shared_tensor->dtype) {
-    return LowerNormal(op, lower_args, analyzer);
-  }
   PrimExpr local_addr =
       Call(DataType::Handle(), tl::access_ptr(),
            {BufferLoad(local_tensor, {local_iter * elems_per_reg * num}),

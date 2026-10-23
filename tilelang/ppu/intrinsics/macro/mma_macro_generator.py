@@ -995,11 +995,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         return inverse_index_map
 
     def _disable_ldmat_swzl(self) -> bool:
-        """Whether the swizzled ldmatrix variant should be disabled.
-
-        Disabled when the pass-context flag disables it or the PPU arch
-        is not 89 (only arch 89 supports the swizzle variant).
-        """
+        """Whether SWZL is disabled by the pass config or a non-PPU15 target."""
         pass_ctx = get_pass_context()
         config_disabled = pass_ctx.config.get(PassConfigKey.TL_DISABLE_LDMAT_SWZL.value, False)
         return config_disabled or self.ppu_arch != 15
