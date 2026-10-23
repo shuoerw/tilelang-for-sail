@@ -6,6 +6,7 @@
 #ifndef TVM_TL_BACKEND_PPU_OP_COPY_H_
 #define TVM_TL_BACKEND_PPU_OP_COPY_H_
 
+#include "op/builtin.h"
 #include "op/copy.h"
 #include "support/check.h"
 
@@ -30,6 +31,19 @@ enum class CopyInst : uint8_t {
 
 const char *CopyInstToString(CopyInst inst);
 bool CopyInstIsCPAsync(CopyInst inst);
+
+// Whether an AIU load relies on compiler-inserted commit/wait operations.
+inline bool IsCompilerSyncAiuLoad(const CallNode *call) {
+  if (!call->op.same_as(tl::ppu_aiu_load())) {
+    return false;
+  }
+  if (auto flag = call->annotations.Get(attr::kAsyncCopyNoImplicitCommitWait)) {
+    const auto *value = flag->as<IntImmNode>();
+    ICHECK(value) << "no_implicit_async_commit_wait must be a constant boolean";
+    return value->value == 0;
+  }
+  return true;
+}
 
 struct CopyAnalysisContext {
   Target target;

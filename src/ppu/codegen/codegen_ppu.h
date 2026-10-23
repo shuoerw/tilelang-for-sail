@@ -90,6 +90,9 @@ private:
   friend void PrintConst(const FloatImmNode *op, std::ostream &os,
                          CodeGenTileLangPPU *p);
 
+  // Shared allocations in AIU kernels require at least 128-byte alignment.
+  int aiu_smem_alignment_{0};
+
   // Global acrand state
   std::string acrand_random_generator_state;
   std::string acrand_random_generator_state_type;

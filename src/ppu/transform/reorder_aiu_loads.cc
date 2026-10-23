@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "../../op/builtin.h"
+#include "ppu/op/copy.h"
 
 namespace tvm {
 namespace tl {
@@ -175,6 +176,19 @@ public:
     for (const Stmt &s : op->seq) {
       seq.push_back(VisitStmt(s));
     }
+
+    // Do not move loads across caller-managed async groups.
+    bool has_explicit_load = false;
+    PostOrderVisit(GetRef<Stmt>(op), [&](const ObjectRef &node) {
+      if (const auto *call = node.as<CallNode>()) {
+        if (call->op.same_as(tl::ppu_aiu_load()) &&
+            !ppu::IsCompilerSyncAiuLoad(call)) {
+          has_explicit_load = true;
+        }
+      }
+    });
+    if (has_explicit_load)
+      return SeqStmt(seq);
 
     // 2. Collect aiu_load statement indices (top-level only, not inside
     //    For/Block/If containers)

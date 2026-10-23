@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tvm import IRModule, s_tir, tirx
+from tvm import IRModule, ir, s_tir, tirx
 from tvm.target import Target
 from tvm.tirx import PrimFunc, SBlock
 from tvm.tirx.stmt_functor import post_order_visit
@@ -39,6 +39,29 @@ def _module_has_shared_barrier(mod: IRModule) -> bool:
         if isinstance(func, PrimFunc):
             post_order_visit(func.body, visit)
     return found
+
+
+@tirx.transform.prim_func_pass(opt_level=0)
+def _AlignAIUSharedMemory(func, mod, ctx):
+    """Use uniform 128-byte shared alignment in kernels that issue AIU loads."""
+    has_aiu = False
+    buffers = []
+
+    def visit(node):
+        nonlocal has_aiu
+        if isinstance(node, tirx.Call) and node.op == ir.Op.get("tl.ppu_aiu_load"):
+            has_aiu = True
+        elif isinstance(node, tirx.AllocBuffer) and node.buffer.scope() in ("shared", "shared.dyn"):
+            buffers.append(node.buffer)
+
+    post_order_visit(func.body, visit)
+    if not has_aiu:
+        return func
+    alignments = dict(func.attrs.get("tl.smem_alignment_map", {})) if func.attrs else {}
+    for buffer in buffers:
+        name = buffer.data.name
+        alignments[name] = tirx.IntImm("int32", max(128, int(alignments.get(name, 0))))
+    return func.with_attr("tl.smem_alignment_map", alignments)
 
 
 def PPUPassPipelineBodyPrologue(mod: IRModule, target: Target) -> IRModule:
@@ -193,6 +216,7 @@ def PPUPassPipelineBody(mod: IRModule, target: Target) -> IRModule:
     # because the merged allocation site is at the beginning of each device function
     enable_aggressive_merge = should_enable_aggressive_merge(pass_ctx=pass_ctx, target=target)
     disable_reuse = should_disable_shared_memory_reuse(pass_ctx=pass_ctx)
+    mod = _AlignAIUSharedMemory(mod)
     mod = tilelang.transform.MergeSharedMemoryAllocations(enable_aggressive_merge=enable_aggressive_merge, disable_reuse=disable_reuse)(mod)
 
     mod = tilelang.transform.ThreadSync("shared")(mod)

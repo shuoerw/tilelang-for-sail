@@ -1507,11 +1507,14 @@ void CodeGenTileLangPPU::PrintStorageScope(const std::string &scope,
   ICHECK_NE(scope, "global")
       << "Cannot allocate global memory when targeting HGGC. You must pass "
          "all global arrays as input instead";
-  if (scope == "shared" || scope == "shared.barrier" ||
-      scope == "shared.cluster_barrier") {
+  if (scope == "shared") {
+    os << "__shared__ __align__("
+       << std::max(barrier_alignment_bytes_, aiu_smem_alignment_) << ") ";
+  } else if (scope == "shared.barrier" || scope == "shared.cluster_barrier") {
     os << "__shared__ __align__(" << barrier_alignment_bytes_ << ") ";
   } else if (scope == "shared.dyn") {
-    os << "extern __shared__ __align__(1024) ";
+    os << "extern __shared__ __align__(" << std::max(1024, aiu_smem_alignment_)
+       << ") ";
   }
 }
 
@@ -2418,8 +2421,68 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
         << "PPU only supports ppu0010/ppu0015; TMA load lowering requires "
            "ppu0015+ TMA.";
   } else if (op->op.same_as(tl::ppu_aiu_load())) {
-    ICHECK_EQ(op->args.size(), 10U);
-    print_extern_call_stmt("tl::aiu_load");
+    ICHECK(op->args.size() == 10U || op->args.size() == 11U)
+        << "ppu_aiu_load expects 10 or 11 args (smem, global, dim_c, dim_w, "
+           "cube_c, cube_w, stride_w_bytes, start_c, start_w, swzl_mode, "
+           "[is_swizzle]), got "
+        << op->args.size();
+
+    arith::Analyzer analyzer;
+    PrimExpr cube_c_expr = analyzer.Simplify(op->args[4]);
+    PrimExpr cube_w_expr = analyzer.Simplify(op->args[5]);
+    PrimExpr swzl_mode_expr = analyzer.Simplify(op->args[9]);
+    PrimExpr is_swizzle_expr = op->args.size() == 11U
+                                   ? analyzer.Simplify(op->args[10])
+                                   : IntImm(DataType::Int(32), 1);
+    const int64_t *cube_c = as_const_int(cube_c_expr);
+    const int64_t *cube_w = as_const_int(cube_w_expr);
+    const int64_t *swzl_mode = as_const_int(swzl_mode_expr);
+    const int64_t *is_swizzle = as_const_int(is_swizzle_expr);
+
+    ICHECK(cube_c) << "tl.ppu_aiu_load cube_c must be constant, got "
+                   << op->args[4];
+    ICHECK(cube_w) << "tl.ppu_aiu_load cube_w must be constant, got "
+                   << op->args[5];
+    ICHECK(swzl_mode) << "tl.ppu_aiu_load swzl_mode must be constant, got "
+                      << op->args[9];
+    ICHECK(is_swizzle) << "tl.ppu_aiu_load is_swizzle must be constant, got "
+                       << is_swizzle_expr;
+    ICHECK_GT(*cube_c, 0) << "tl.ppu_aiu_load cube_c must be positive";
+    ICHECK_LE(*cube_c, 128)
+        << "tl.ppu_aiu_load cube_c must not exceed 128 bytes";
+    ICHECK_GT(*cube_w, 0) << "tl.ppu_aiu_load cube_w must be positive";
+    ICHECK(*is_swizzle == 0 || *is_swizzle == 1)
+        << "tl.ppu_aiu_load is_swizzle must be 0 or 1, got " << *is_swizzle;
+
+    if (*is_swizzle == 1) {
+      ICHECK(*cube_c == 64 || *cube_c == 128)
+          << "tl.ppu_aiu_load cube_c must be 64 or 128 bytes for a "
+             "swizzled load, got "
+          << *cube_c;
+      int expected_swizzle_mode = *cube_c == 128 ? 0 : 1;
+      ICHECK_EQ(*swzl_mode, expected_swizzle_mode)
+          << "tl.ppu_aiu_load cube_c=" << *cube_c
+          << " requires swzl_mode=" << expected_swizzle_mode << ", got "
+          << *swzl_mode;
+    }
+
+    std::vector<std::string> args;
+    for (int index = 0; index < 10; ++index) {
+      args.push_back(this->PrintExpr(op->args[index]));
+    }
+    this->PrintIndent();
+    this->stream << "tl::aiu_load";
+    if (*is_swizzle == 0) {
+      this->stream << "<false>";
+    }
+    this->stream << "(";
+    for (size_t i = 0; i < args.size(); ++i) {
+      if (i != 0) {
+        this->stream << ", ";
+      }
+      this->stream << args[i];
+    }
+    this->stream << ");\n";
   } else if (op->op.same_as(tl::tma_store()) ||
              op->op.same_as(tl::tma_load_gather4()) ||
              op->op.same_as(tl::tma_store_scatter4())) {
@@ -4990,6 +5053,22 @@ void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar, const PrimFunc &f) {
   CodeGenC::DeclareFunction(gvar, f);
   // clear previous generated state.
   this->InitFuncState(f);
+  aiu_smem_alignment_ = 0;
+  tirx::PostOrderVisit(f->body, [this](const ObjectRef &node) {
+    if (const auto *call = node.as<CallNode>();
+        call && call->op.same_as(tl::ppu_aiu_load())) {
+      aiu_smem_alignment_ = 128;
+    }
+  });
+  if (aiu_smem_alignment_ != 0) {
+    if (auto alignments =
+            f->GetAttr<Map<String, IntImm>>(tl::kSmemAlignmentMap)) {
+      for (const auto &[name, alignment] : alignments.value()) {
+        aiu_smem_alignment_ =
+            std::max(aiu_smem_alignment_, static_cast<int>(alignment->value));
+      }
+    }
+  }
   // reserve keywords
   ReserveKeywordsAsUnique_();
 

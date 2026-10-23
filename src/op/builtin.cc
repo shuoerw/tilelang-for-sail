@@ -838,7 +838,7 @@ TIR_DEFINE_TL_BUILTIN(tma_store_cluster)
                                Integer(CallEffectKind::kOpaque));
 
 TIR_DEFINE_TL_BUILTIN(ppu_aiu_load)
-    .set_num_inputs(10)
+    .set_num_inputs(-1)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 
