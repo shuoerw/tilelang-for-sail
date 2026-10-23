@@ -5,6 +5,7 @@ from collections.abc import Callable
 from tvm import IRModule
 from tvm.target import Target
 
+
 LowerFunc = Callable[[IRModule, Target], IRModule]
 
 

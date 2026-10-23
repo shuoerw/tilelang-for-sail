@@ -382,6 +382,8 @@ CodeGenTileLangC::GetFunctionInfo(const CallNode *op,
 
 void CodeGenTileLangC::VisitExpr_(const CallNode *op,
                                   std::ostream &os) { // NOLINT(*)
+  ICHECK(tl::GetAtomicScope(op) == "device")
+      << "Non-device-scope atomics are not implemented by the C backend";
   if (op->op.same_as(builtin::tvm_stack_alloca())) {
     std::string stack_name = name_supply_->FreshName("stack");
     const std::string &type = op->args[0].as<StringImmNode>()->value;

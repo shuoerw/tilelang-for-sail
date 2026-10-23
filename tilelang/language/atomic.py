@@ -17,6 +17,36 @@ _MEMORY_ORDER_ID_MAP = {
     "seq_cst": 5,
 }
 
+_PPU_ATOMIC_DTYPES = frozenset(("int32", "uint32", "int64", "uint64", "float32", "float64"))
+_ATOMIC_MEMORY_ORDERS = {
+    "atomic_add": frozenset(_MEMORY_ORDER_ID_MAP),
+    "atomic_load": frozenset(("relaxed", "consume", "acquire", "seq_cst")),
+    "atomic_store": frozenset(("relaxed", "release", "seq_cst")),
+}
+
+
+def _validate_memory_scope(scope: str) -> None:
+    scopes = ("block", "device", "system")
+    if scope not in scopes:
+        raise ValueError(f"Unsupported memory scope {scope!r}; expected one of: {', '.join(scopes)}")
+
+
+def _validate_atomic_type(operation: str, dtype: object, scope: str) -> None:
+    dtype_name = str(dtype)
+    if dtype_name not in _PPU_ATOMIC_DTYPES:
+        supported = ", ".join(sorted(_PPU_ATOMIC_DTYPES))
+        raise TypeError(
+            f"PPU {scope}-scope {operation} does not support dtype {dtype_name!r}; expected 32/64-bit integers or floats: {supported}"
+        )
+
+
+def _validate_atomic_order(operation: str, memory_order: str, scope: str) -> int:
+    supported_orders = _ATOMIC_MEMORY_ORDERS[operation]
+    if not isinstance(memory_order, str) or memory_order not in supported_orders:
+        supported = ", ".join(sorted(supported_orders))
+        raise ValueError(f"PPU {scope}-scope {operation} does not support memory_order={memory_order!r}; expected one of: {supported}")
+    return _MEMORY_ORDER_ID_MAP[memory_order]
+
 
 def atomic_max(dst: Buffer, value: PrimExpr, memory_order: str | None = None, return_prev: bool = False) -> PrimExpr:
     """
@@ -182,7 +212,14 @@ def atomic_min(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
     return T.call_intrin("handle", op.Op.get("tl.tileop.atomicmin"), value, dst, annotations=ann if ann else None)
 
 
-def atomic_add(dst: Buffer, value: PrimExpr, memory_order: str | None = None, return_prev: bool = False, use_tma: bool = False) -> PrimExpr:
+def atomic_add(
+    dst: Buffer,
+    value: PrimExpr,
+    memory_order: str | None = None,
+    return_prev: bool = False,
+    use_tma: bool = False,
+    scope: str = "device",
+) -> PrimExpr:
     """
     Atomically add `value` into `dst`, returning a handle to the operation.
 
@@ -194,6 +231,13 @@ def atomic_add(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
         memory_order (Optional[str]): Optional memory-order name controlling the atomic operation's ordering.
         return_prev (bool): If True, return the previous value; if False, return handle (default False).
         use_tma (bool): If True, use TMA (cp.reduce) to perform the atomic add. This is available only for sm90+ (default False).
+        scope (str): Memory visibility scope: ``"device"`` (default), ``"block"``, or ``"system"``.
+            Block and system scope currently require the PPU backend and scalar operands.
+            Both scopes support 32/64-bit integer and floating-point types, including
+            ``return_prev=True``.
+            Initialize global 64-bit integer counters before kernel launch or with
+            ``atomic_store``: ordinary in-kernel stores can leave stale cached values
+            when mixed with block-scope atomics on PPU.
 
     Returns:
         PrimExpr: A handle representing the atomic addition operation, or the previous value if return_prev is True.
@@ -229,6 +273,22 @@ def atomic_add(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
 
     src_extent = get_extent(value)
     dst_extent = get_extent(dst)
+    _validate_memory_scope(scope)
+    if scope in ("block", "system"):
+        if src_extent is not None or dst_extent is not None:
+            raise NotImplementedError(f"PPU {scope} scope is supported only for scalar atomic_add")
+        if use_tma:
+            raise NotImplementedError(f"PPU {scope}-scope atomic_add does not support use_tma=True")
+        _validate_atomic_type("atomic_add", dst.dtype, scope)
+        memory_order_id = _validate_atomic_order("atomic_add", "relaxed" if memory_order is None else memory_order, scope)
+        return T.call_intrin(
+            dst.dtype if return_prev else "handle",
+            op.Op.get("tl.atomic_add_ret_elem_op") if return_prev else op.Op.get("tl.atomic_add_elem_op"),
+            T.access_ptr(dst, "rw"),
+            value,
+            memory_order_id,
+            scope,
+        )
 
     # Thread-level atomic add, where both extent can't be inferred
     if dst_extent is None and src_extent is None:
@@ -354,7 +414,11 @@ def atomic_addx4(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> Pri
     return T.call_intrin(return_type, atomic_addx4_op, T.access_ptr(dst, "rw"), T.access_ptr(value, "r"))
 
 
-def atomic_load(src: Buffer, memory_order: str = "seq_cst") -> PrimExpr:
+def atomic_load(
+    src: Buffer,
+    memory_order: str = "seq_cst",
+    scope: str = "device",
+) -> PrimExpr:
     """
     Load a value from the given buffer using the specified atomic memory ordering.
 
@@ -362,6 +426,12 @@ def atomic_load(src: Buffer, memory_order: str = "seq_cst") -> PrimExpr:
     memory_order selects the ordering and must be one of: "relaxed", "consume", "acquire",
     "release", "acq_rel", or "seq_cst" (default).
     Raises KeyError if an unknown memory_order is provided.
+    For block and system scopes, only "relaxed", "consume", "acquire", and "seq_cst" are supported.
+    scope may be "device" (default), "block", or "system";
+    block and system scope currently require the PPU backend.
+    System scope supports 32/64-bit integer and floating-point types.
+    Block and system scopes raise ValueError instead for invalid memory orders;
+    an unknown scope also raises ValueError.
 
     Note: atomic_load always returns the loaded value, so no return_prev parameter is needed.
 
@@ -390,15 +460,28 @@ def atomic_load(src: Buffer, memory_order: str = "seq_cst") -> PrimExpr:
         >>> counter = T.Tensor([1], "int64", name="counter")
         >>> current_count = atomic_load(counter, memory_order="relaxed")
     """
+    _validate_memory_scope(scope)
+    if scope in ("block", "system"):
+        if scope == "system":
+            _validate_atomic_type("atomic_load", src.dtype, scope)
+        memory_order_id = _validate_atomic_order("atomic_load", memory_order, scope)
+    else:
+        memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order]
     return T.call_intrin(
         src.dtype,
         op.Op.get("tl.atomic_load_elem_op"),
         T.access_ptr(src, "r"),
-        _MEMORY_ORDER_ID_MAP[memory_order],
+        memory_order_id,
+        *([scope] if scope != "device" else []),
     )
 
 
-def atomic_store(dst: Buffer, src: PrimExpr, memory_order: str = "seq_cst") -> PrimExpr:
+def atomic_store(
+    dst: Buffer,
+    src: PrimExpr,
+    memory_order: str = "seq_cst",
+    scope: str = "device",
+) -> PrimExpr:
     """
     Perform an atomic store of `src` into `dst` with the given memory ordering.
 
@@ -408,12 +491,17 @@ def atomic_store(dst: Buffer, src: PrimExpr, memory_order: str = "seq_cst") -> P
         memory_order (str, optional): Memory ordering name; one of "relaxed", "consume",
             "acquire", "release", "acq_rel", or "seq_cst". Defaults to "seq_cst".
             The name is mapped to an internal numeric ID used by the underlying runtime.
+            For block and system scopes, only "relaxed", "release", and "seq_cst" are supported.
+        scope (str): Memory visibility scope: ``"device"`` (default), ``"block"``, or ``"system"``.
+            Block and system scope currently require the PPU backend.
+            System scope supports 32/64-bit integer and floating-point types.
 
     Returns:
         PrimExpr: A handle representing the issued atomic store operation.
 
     Raises:
         KeyError: If `memory_order` is not one of the supported names.
+        ValueError: Raised instead for invalid block/system-scope memory orders, or if scope is unknown.
 
     Note: atomic_store doesn't return a previous value, so no return_prev parameter is needed.
 
@@ -448,12 +536,20 @@ def atomic_store(dst: Buffer, src: PrimExpr, memory_order: str = "seq_cst") -> P
         >>> log_counter = T.Tensor([1], "int64", name="log_counter")
         >>> atomic_store(log_counter, 0)  # Reset counter atomically
     """
+    _validate_memory_scope(scope)
+    if scope in ("block", "system"):
+        if scope == "system":
+            _validate_atomic_type("atomic_store", dst.dtype, scope)
+        memory_order_id = _validate_atomic_order("atomic_store", memory_order, scope)
+    else:
+        memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order]
     return T.call_intrin(
         "handle",
         op.Op.get("tl.atomic_store_elem_op"),
         T.access_ptr(dst, "w"),
         src,
-        _MEMORY_ORDER_ID_MAP[memory_order],
+        memory_order_id,
+        *([scope] if scope != "device" else []),
     )
 
 

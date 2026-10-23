@@ -1159,6 +1159,8 @@ std::string CodeGenTileLangHIP::GetBufferRef(DataType t,
 }
 
 void CodeGenTileLangHIP::VisitExpr_(const CallNode *op, std::ostream &os) {
+  ICHECK(tl::GetAtomicScope(op) == "device")
+      << "Non-device-scope atomics are not implemented by the HIP backend";
   auto print_extern_call_stmt = [&](std::string name, size_t start = 0,
                                     size_t end = 0) {
     this->PrintIndent();

@@ -15,7 +15,7 @@ using cutlass::half_t;
 #define TL_NOT_IMPLEMENTED()                                                   \
   {                                                                            \
     printf("%s not implemented\n", __PRETTY_FUNCTION__);                       \
-    __brkpt()                                                                  \
+    __brkpt();                                                                 \
   }
 template <typename T> struct normalize_atomic_type {
   using type = T;
@@ -486,16 +486,56 @@ AtomicAddx4Ret(dst_dtype *ref, ValType val,
   return tl_atomic_detail::AtomicAddx4ScalarRet(ref, add_val);
 }
 
-template <typename T> TL_DEVICE T AtomicLoad(T *ref, int memory_order) {
-  hggc::atomic_ref<T, hggc::thread_scope_device> aref(*ref);
+template <hggc::thread_scope Scope = hggc::thread_scope_device, typename T>
+TL_DEVICE T AtomicLoad(T *ref, int memory_order) {
+  hggc::atomic_ref<T, Scope> aref(*ref);
+  return aref.load(hggc::memory_order(memory_order));
+}
+
+template <hggc::thread_scope Scope = hggc::thread_scope_device, typename T1,
+          typename T2>
+TL_DEVICE void AtomicStore(T1 *ref, T2 value, int memory_order) {
+  using NT1 = typename normalize_atomic_type<T1>::type;
+  hggc::atomic_ref<NT1, Scope> aref(*reinterpret_cast<NT1 *>(ref));
+  aref.store(hggc_cast<NT1>(value), hggc::memory_order(memory_order));
+}
+
+template <typename T1, typename T2>
+TL_DEVICE T1 PPUBlockAtomicAdd(T1 *address, T2 value, int memory_order) {
+  static_assert(
+      std::is_arithmetic_v<T1> && (sizeof(T1) == 4 || sizeof(T1) == 8),
+      "PPU block-scope atomic add supports 32/64-bit integers or floats");
+  hggc::atomic_ref<T1, hggc::thread_scope_block> aref(*address);
+  return aref.fetch_add(static_cast<T1>(value),
+                        hggc::memory_order(memory_order));
+}
+
+template <typename T1, typename T2>
+TL_DEVICE T1 PPUSystemAtomicAdd(T1 *address, T2 value, int memory_order) {
+  static_assert(
+      std::is_arithmetic_v<T1> && (sizeof(T1) == 4 || sizeof(T1) == 8),
+      "PPU system-scope atomic add supports 32/64-bit integers or floats");
+  hggc::atomic_ref<T1, hggc::thread_scope_system> aref(*address);
+  return aref.fetch_add(static_cast<T1>(value),
+                        hggc::memory_order(memory_order));
+}
+
+template <typename T>
+TL_DEVICE T PPUSystemAtomicLoad(T *ref, int memory_order) {
+  static_assert(
+      std::is_arithmetic_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
+      "PPU system-scope atomic load supports 32/64-bit integers or floats");
+  hggc::atomic_ref<T, hggc::thread_scope_system> aref(*ref);
   return aref.load(hggc::memory_order(memory_order));
 }
 
 template <typename T1, typename T2>
-TL_DEVICE void AtomicStore(T1 *ref, T2 value, int memory_order) {
-  using NT1 = typename normalize_atomic_type<T1>::type;
-  hggc::atomic_ref<NT1, hggc::thread_scope_device> aref(*ref);
-  aref.store(hggc_cast<NT1>(value), hggc::memory_order(memory_order));
+TL_DEVICE void PPUSystemAtomicStore(T1 *ref, T2 value, int memory_order) {
+  static_assert(
+      std::is_arithmetic_v<T1> && (sizeof(T1) == 4 || sizeof(T1) == 8),
+      "PPU system-scope atomic store supports 32/64-bit integers or floats");
+  hggc::atomic_ref<T1, hggc::thread_scope_system> aref(*ref);
+  aref.store(static_cast<T1>(value), hggc::memory_order(memory_order));
 }
 
 template <typename T1, typename T2>

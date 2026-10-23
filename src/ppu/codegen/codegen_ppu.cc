@@ -61,6 +61,47 @@ std::optional<DataType> GetAccessPtrElementType(const PrimExpr &expr) {
   return std::nullopt;
 }
 
+enum class PPUAtomicKind { kAdd, kLoad, kStore };
+
+void ValidatePPUAtomicType(const PrimExpr &pointer,
+                           const std::string &operation) {
+  auto element_type = GetAccessPtrElementType(pointer);
+  ICHECK(element_type.has_value())
+      << operation
+      << " expects an address_of, tl.access_ptr, or tvm_access_ptr operand";
+  ICHECK_EQ(element_type->lanes(), 1)
+      << operation << " requires a scalar element type, got "
+      << element_type.value();
+  ICHECK((element_type->bits() == 32 || element_type->bits() == 64) &&
+         (element_type->is_int() || element_type->is_uint() ||
+          element_type->is_float()))
+      << operation << " supports 32/64-bit integers or floats, got "
+      << element_type.value();
+}
+
+void ValidatePPUAtomicOrder(const PrimExpr &order, PPUAtomicKind kind,
+                            const std::string &operation) {
+  const int64_t *memory_order = as_const_int(order);
+  ICHECK(memory_order)
+      << operation << " memory_order must be a compile-time integer constant";
+
+  bool valid = false;
+  switch (kind) {
+  case PPUAtomicKind::kAdd:
+    valid = *memory_order >= 0 && *memory_order <= 5;
+    break;
+  case PPUAtomicKind::kLoad:
+    valid = *memory_order == 0 || *memory_order == 1 || *memory_order == 2 ||
+            *memory_order == 5;
+    break;
+  case PPUAtomicKind::kStore:
+    valid = *memory_order == 0 || *memory_order == 3 || *memory_order == 5;
+    break;
+  }
+  ICHECK(valid) << operation
+                << " received invalid memory_order=" << *memory_order;
+}
+
 int GetTileLangCPAsyncTransferBytes(const CallNode *op) {
   auto call = Downcast<Call>(GetRef<PrimExpr>(op));
   ICHECK(call->args.size() == 3 || call->args.size() == 4)
@@ -3696,21 +3737,44 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     os << "tl::warp_reduce_bitor(" << PrintExpr(op->args[0]) << ")";
     return true;
   } else if (op->op.same_as(tl::atomic_add_elem_op())) {
-    // atomic_add_elem_op(dst_ptr, src_value[, memory_order])
+    // atomic_add_elem_op(dst_ptr, src_value[, memory_order[, scope]])
+    const std::string scope = tl::GetAtomicScope(op);
+    const bool system_scope = scope == "system";
+    if (scope != "device") {
+      const std::string operation = "PPU " + scope + "-scope atomic_add";
+      ValidatePPUAtomicType(op->args[0], operation);
+      ValidatePPUAtomicOrder(op->args[2], PPUAtomicKind::kAdd, operation);
+    }
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string src_value = PrintExpr(op->args[1]);
-    this->PrintIndent();
-    this->stream << "AtomicAdd(" << dst_ptr << ", " << src_value;
+    std::string memory_order;
     if (op->args.size() > 2) {
-      this->stream << ", " << PrintExpr(op->args[2]);
+      memory_order = PrintExpr(op->args[2]);
+    }
+    this->PrintIndent();
+    this->stream << (system_scope       ? "PPUSystemAtomicAdd("
+                     : scope == "block" ? "PPUBlockAtomicAdd("
+                                        : "AtomicAdd(")
+                 << dst_ptr << ", " << src_value;
+    if (op->args.size() > 2) {
+      this->stream << ", " << memory_order;
     }
     this->stream << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_add_ret_elem_op())) {
-    // atomic_add_ret_elem_op(dst_ptr, src_value[, memory_order]) -> returns
-    // prev value
-    os << "AtomicAddRet(" << PrintExpr(op->args[0]) << ", "
-       << PrintExpr(op->args[1]);
+    // atomic_add_ret_elem_op(dst_ptr, src_value[, memory_order[, scope]])
+    const std::string scope = tl::GetAtomicScope(op);
+    const bool block_scope = scope == "block";
+    const bool system_scope = scope == "system";
+    if (scope != "device") {
+      const std::string operation = "PPU " + scope + "-scope atomic_add";
+      ValidatePPUAtomicType(op->args[0], operation);
+      ValidatePPUAtomicOrder(op->args[2], PPUAtomicKind::kAdd, operation);
+    }
+    os << (system_scope  ? "PPUSystemAtomicAdd("
+           : block_scope ? "PPUBlockAtomicAdd("
+                         : "AtomicAddRet(")
+       << PrintExpr(op->args[0]) << ", " << PrintExpr(op->args[1]);
     if (op->args.size() > 2) {
       os << ", " << PrintExpr(op->args[2]);
     }
@@ -3739,18 +3803,44 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     this->stream << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_load_elem_op())) {
-    // atomic_load_elem_op(src_ptr, memory_order) -> returns loaded value
-    os << "AtomicLoad(" << PrintExpr(op->args[0]) << ", "
-       << PrintExpr(op->args[1]) << ")";
+    // atomic_load_elem_op(src_ptr, memory_order[, scope]) -> returns loaded
+    // value
+    const std::string scope = tl::GetAtomicScope(op);
+    const bool system_scope = scope == "system";
+    if (scope != "device") {
+      const std::string operation = "PPU " + scope + "-scope atomic_load";
+      if (system_scope) {
+        ValidatePPUAtomicType(op->args[0], operation);
+      }
+      ValidatePPUAtomicOrder(op->args[1], PPUAtomicKind::kLoad, operation);
+    }
+    std::string src_ptr = PrintExpr(op->args[0]);
+    std::string memory_order = PrintExpr(op->args[1]);
+    os << (system_scope       ? "PPUSystemAtomicLoad("
+           : scope == "block" ? "AtomicLoad<hggc::thread_scope_block>("
+                              : "AtomicLoad(")
+       << src_ptr << ", " << memory_order << ")";
     return true;
   } else if (op->op.same_as(tl::atomic_store_elem_op())) {
-    // atomic_store_elem_op(dst_ptr, value, memory_order)
+    // atomic_store_elem_op(dst_ptr, value, memory_order[, scope])
+    const std::string scope = tl::GetAtomicScope(op);
+    const bool system_scope = scope == "system";
+    if (scope != "device") {
+      const std::string operation = "PPU " + scope + "-scope atomic_store";
+      if (system_scope) {
+        ValidatePPUAtomicType(op->args[0], operation);
+      }
+      ValidatePPUAtomicOrder(op->args[2], PPUAtomicKind::kStore, operation);
+    }
     std::string dst_ptr = PrintExpr(op->args[0]);
     std::string value = PrintExpr(op->args[1]);
     std::string memory_order = PrintExpr(op->args[2]);
     this->PrintIndent();
-    this->stream << "AtomicStore(" << dst_ptr << ", " << value << ", "
-                 << memory_order << ");\n";
+    this->stream << (system_scope ? "PPUSystemAtomicStore("
+                     : scope == "block"
+                         ? "AtomicStore<hggc::thread_scope_block>("
+                         : "AtomicStore(")
+                 << dst_ptr << ", " << value << ", " << memory_order << ");\n";
     return true;
   } else if (op->op.same_as(tl::atomic_max_elem_op())) {
     // atomic_max_elem_op(dst_ptr, src_value[, memory_order])
