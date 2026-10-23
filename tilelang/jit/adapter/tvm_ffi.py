@@ -171,6 +171,7 @@ class TVMFFIKernelAdapter(BaseKernelAdapter):
         # caller's active PyTorch stream/device.
         # current_stream_functor = self.get_current_stream_functor()
         current_device_functor = self.get_current_device_functor()
+        use_ppu_stream = self.target.kind.name == "ppu"
 
         # Convert TVM types to native Python types during initialization
         # Convert tvm.DataType to torch.dtype for tensor creation
@@ -284,7 +285,12 @@ class TVMFFIKernelAdapter(BaseKernelAdapter):
                 tensor_list.append(tensor)
 
             executable = get_executable()
-            executable(*tensor_list)
+            if use_ppu_stream and out_device is not None and out_device.type == "cuda":
+                # PPU launches use a separate FFI stream context from Torch.
+                with tvm.ffi.use_raw_stream(tvm.device(19, out_device.index), torch.cuda.current_stream(out_device).cuda_stream):
+                    executable(*tensor_list)
+            else:
+                executable(*tensor_list)
 
             # Return outputs in the requested form
             if len(self.result_idx) == 1:
