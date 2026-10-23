@@ -176,15 +176,17 @@ TL_DEVICE void tix_ldmatrix_x2_trans_m16n16_b8(void const *const smem_ptr,
   int32_t *value = reinterpret_cast<int32_t *>(local_ptr);
 #if defined(__HGGC_ARCH__)
   if (!trans_block) {
-    asm volatile(
-        "ldmatrix.sync.aligned.x2.trans.m16n16.shared.b8 {%0, %1, %2, %3}, [%4];\n"
-        : "=r"(value[0]), "=r"(value[1]), "=r"(value[2]), "=r"(value[3])
-        : "r"(smem_int_ptr));
+    asm volatile("ldmatrix.sync.aligned.x2.trans.m16n16.shared.b8 {%0, %1, %2, "
+                 "%3}, [%4];\n"
+                 : "=r"(value[0]), "=r"(value[1]), "=r"(value[2]),
+                   "=r"(value[3])
+                 : "r"(smem_int_ptr));
   } else {
-    asm volatile(
-        "ldmatrix.sync.aligned.x2.trans.m16n16.shared.b8 {%0, %1, %2, %3}, [%4];\n"
-        : "=r"(value[0]), "=r"(value[2]), "=r"(value[1]), "=r"(value[3])
-        : "r"(smem_int_ptr));
+    asm volatile("ldmatrix.sync.aligned.x2.trans.m16n16.shared.b8 {%0, %1, %2, "
+                 "%3}, [%4];\n"
+                 : "=r"(value[0]), "=r"(value[2]), "=r"(value[1]),
+                   "=r"(value[3])
+                 : "r"(smem_int_ptr));
   }
 #endif
 }

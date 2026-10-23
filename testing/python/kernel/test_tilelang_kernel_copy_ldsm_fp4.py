@@ -45,9 +45,7 @@ def _make_kernel(matrix, swizzled):
             fragment = T.alloc_fragment(fragment_shape, DTYPE)
             T.annotate_layout(
                 {
-                    shared: make_full_bank_swizzled_layout(shared)
-                    if swizzled
-                    else make_linear_layout(shared),
+                    shared: make_full_bank_swizzled_layout(shared) if swizzled else make_linear_layout(shared),
                     fragment: _fragment_layout(matrix),
                 }
             )

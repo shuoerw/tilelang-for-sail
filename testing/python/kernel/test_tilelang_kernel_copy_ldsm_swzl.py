@@ -90,9 +90,7 @@ def test_swzl_b16_trans_full_bank():
     """bf16 transposed fragment, 128B swizzle (mode 0), uses the trans helper."""
     shape = (16, 64)
     frag_shape = (16, 16)
-    frag_layout = make_gemm_fragment_8x8_transposed().repeat(
-        [frag_shape[0] // 8, frag_shape[1] // 8], repeat_on_thread=False
-    )
+    frag_layout = make_gemm_fragment_8x8_transposed().repeat([frag_shape[0] // 8, frag_shape[1] // 8], repeat_on_thread=False)
 
     @T.prim_func
     def main(A: T.Tensor(shape, "bfloat16"), B: T.Tensor(frag_shape, "bfloat16")):
@@ -101,7 +99,7 @@ def test_swzl_b16_trans_full_bank():
             fragment = T.alloc_fragment(frag_shape, "bfloat16")
             T.annotate_layout({shared: make_full_bank_swizzled_layout(shared), fragment: frag_layout})
             T.copy(A, shared)
-            T.copy(shared[0:frag_shape[0], 0:frag_shape[1]], fragment)
+            T.copy(shared[0 : frag_shape[0], 0 : frag_shape[1]], fragment)
             T.copy(fragment, B)
 
     kernel = tilelang.compile(main, out_idx=[-1])

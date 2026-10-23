@@ -182,9 +182,7 @@ def test_ldsm_b16_pipelined_gemm():
     # PPU15 enables the swizzled bulk-tensor LDSM by default.  Verify both
     # that default path and the ordinary ldmatrix path selected when callers
     # explicitly disable the optimization.
-    assert "tl::tix_ldmatrix_swzl_x4(" in source, (
-        "Expected default swizzled ldmatrix in generated CUDA source"
-    )
+    assert "tl::tix_ldmatrix_swzl_x4(" in source, "Expected default swizzled ldmatrix in generated CUDA source"
 
     a = torch.randn(128, 128, device="cuda").half()
     b = torch.randn(128, 128, device="cuda").half()
@@ -199,14 +197,10 @@ def test_ldsm_b16_pipelined_gemm():
     )
     normal_source = normal_kernel.get_kernel_source()
     calls = re.findall(r"tl::tix_ldmatrix_x4\(", normal_source)
-    assert len(calls) > 0, (
-        "Expected ordinary tl::tix_ldmatrix_x4 when swizzle is disabled"
-    )
+    assert len(calls) > 0, "Expected ordinary tl::tix_ldmatrix_x4 when swizzle is disabled"
 
     normal_c = normal_kernel(a, b)
-    torch.testing.assert_close(
-        normal_c.to(torch.float32), ref_c, rtol=2e-2, atol=2e-2
-    )
+    torch.testing.assert_close(normal_c.to(torch.float32), ref_c, rtol=2e-2, atol=2e-2)
 
 
 if __name__ == "__main__":
