@@ -11,7 +11,7 @@ import tilelang.testing
 PPU_TARGET = "ppu"
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("dtype", ["int32", "uint32", "int64", "float32"])
 def test_block_atomic_roundtrip(dtype):
     @T.prim_func
@@ -39,7 +39,7 @@ def test_block_atomic_roundtrip(dtype):
     torch.testing.assert_close(result, expected)
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("storage", ["shared", "global"])
 @pytest.mark.parametrize(("store_order", "load_order"), [("release", "acquire"), ("release", "consume"), ("seq_cst", "seq_cst")])
 def test_block_atomic_message_passing(storage, store_order, load_order):
@@ -104,7 +104,7 @@ def test_block_atomic_add_codegen(dtype):
     assert source.count("PPUBlockAtomicAdd(") == 12
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("dtype", _BLOCK_ADD_DTYPES)
 def test_block_atomic_add_orders_runtime(dtype):
     compiled = tilelang.compile(_block_add_orders_kernel(dtype), target=PPU_TARGET, execution_backend="tvm_ffi")
@@ -116,7 +116,7 @@ def test_block_atomic_add_orders_runtime(dtype):
     assert previous.cpu().tolist() == [0, 2, 4, 6, 8, 10]
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("dtype", _BLOCK_ADD_DTYPES)
 @pytest.mark.parametrize("storage", ["shared", "global"])
 @pytest.mark.parametrize("return_prev", [False, True])
@@ -157,7 +157,7 @@ def test_block_atomic_add_contended(dtype, storage, return_prev):
                 assert sorted(block_tickets) == list(range(initial, initial + 512))
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("storage", ["shared", "global"])
 def test_block_atomic_add_acq_rel_message_passing(storage):
     @T.prim_func
@@ -194,7 +194,7 @@ def test_block_atomic_add_acq_rel_message_passing(storage):
         assert result.cpu().tolist() == [333, 333]
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("vectorized", [False, True])
 def test_block_atomic_add_loop_runtime(vectorized):
     size = 128 if vectorized else 130

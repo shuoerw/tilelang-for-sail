@@ -129,7 +129,7 @@ def test_ppu_scoped_atomic_raw_ir_order_validation(scope, operation, memory_orde
             tilelang.lower(kernel, target=PPU_TARGET, enable_device_compile=False)
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize(
     ("dtype", "torch_dtype"),
     [("int32", torch.int32), ("uint32", torch.uint32)],
@@ -153,7 +153,7 @@ def test_ppu_system_atomic_runtime(dtype, torch_dtype):
     )
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 def test_ppu_system_atomic_vectorized_loop():
     @T.prim_func
     def kernel(data: T.Tensor((128,), T.int32)):
@@ -177,7 +177,7 @@ def test_ppu_system_atomic_vectorized_loop():
     torch.testing.assert_close(data, torch.arange(2, 6, dtype=torch.int32, device="cuda").repeat(32))
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 def test_ppu_system_atomic_parallel_loop():
     @T.prim_func
     def kernel(data: T.Tensor((130,), T.int32), result: T.Tensor((130,), T.int32)):
@@ -195,7 +195,7 @@ def test_ppu_system_atomic_parallel_loop():
     torch.testing.assert_close(result, torch.arange(1, 131, dtype=torch.int32, device="cuda"))
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("dtype", ["int32", "uint32"])
 @pytest.mark.parametrize("memory_order", ["relaxed", "consume", "acquire", "release", "acq_rel", "seq_cst"])
 def test_ppu_system_atomic_contended_add(dtype, memory_order):
@@ -213,7 +213,7 @@ def test_ppu_system_atomic_contended_add(dtype, memory_order):
     assert data.item() == initial + 32 * 128 * 8
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("dtype", ["int32", "uint32"])
 def test_ppu_system_atomic_conditional_value(dtype):
     @T.prim_func
@@ -240,7 +240,7 @@ def test_ppu_system_atomic_conditional_value(dtype):
     torch.testing.assert_close(result, expected)
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize(("store_order", "load_order"), [("release", "acquire"), ("release", "consume"), ("seq_cst", "seq_cst")])
 def test_ppu_system_atomic_message_passing(store_order, load_order):
     # Two resident CTAs exchange ordinary payload writes through an atomic flag.
@@ -282,7 +282,7 @@ def test_ppu_system_atomic_message_passing(store_order, load_order):
         assert errors.tolist() == [0, 0]
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_ge(1, 5)
 @pytest.mark.parametrize("seq_cst", [False, True])
 @pytest.mark.parametrize("use_add", [False, True])
 def test_ppu_system_atomic_peer_message_passing(seq_cst, use_add):
