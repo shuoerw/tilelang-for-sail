@@ -164,4 +164,31 @@ TL_DEVICE void tix_ldmatrix_swzl_x4_trans(void const *const smem_ptr,
   }
 }
 
+// PPU0015: 8-bit transposed loads at m16n16 granularity.
+// hgcc inline-ptx only accepts the plain PTX spelling; the ppu.tc02.* prefixed
+// form of m16n16.b8 is not a valid instruction on this arch (verified against
+// the compiler's inline-ptx diagnostics: "unsupported ldmatrix in arch
+// ppu0015").
+TL_DEVICE void tix_ldmatrix_x2_trans_m16n16_b8(void const *const smem_ptr,
+                                               void *const local_ptr,
+                                               bool trans_block) {
+  uint32_t smem_int_ptr = smem_ptr_to_uint(smem_ptr);
+  int32_t *value = reinterpret_cast<int32_t *>(local_ptr);
+#if defined(__HGGC_ARCH__)
+  if (!trans_block) {
+    asm volatile("ldmatrix.sync.aligned.x2.trans.m16n16.shared.b8 {%0, %1, %2, "
+                 "%3}, [%4];\n"
+                 : "=r"(value[0]), "=r"(value[1]), "=r"(value[2]),
+                   "=r"(value[3])
+                 : "r"(smem_int_ptr));
+  } else {
+    asm volatile("ldmatrix.sync.aligned.x2.trans.m16n16.shared.b8 {%0, %1, %2, "
+                 "%3}, [%4];\n"
+                 : "=r"(value[0]), "=r"(value[2]), "=r"(value[1]),
+                   "=r"(value[3])
+                 : "r"(smem_int_ptr));
+  }
+#endif
+}
+
 } // namespace tl

@@ -19,6 +19,7 @@ int TargetPPUGetWarpSize(Target target);
 bool TargetHasAiuCopy(Target target);
 bool TargetPPUHasAsyncCopy(Target target);
 bool TargetPPUHasLdmatrix(Target target);
+bool TargetPPUHasLdmatrixSwzl(const Target &target);
 bool TargetPPUHasStmatrix(Target target);
 
 bool IsPpuVectorizableFP8(DataType dtype);

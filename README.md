@@ -18,12 +18,12 @@ The PPU backend adds native code generation, runtime integration, and hardware-s
 
 ## PPU Pass Configs
 
-Two PPU-specific pass configs control hardware optimization features. Both are **disabled by default** and must be explicitly enabled via `pass_configs`:
+Two PPU-specific pass configs control hardware optimization features. AIU lowering is **disabled by default** and must be explicitly enabled via `pass_configs`; `ldmatrix.swzl` is **enabled by default** on `ppu0015`:
 
 | Config Key | Description |
 |------------|-------------|
 | `tl.disable_aiu_lower` | When set to `False`, enables AIU (Asynchronous Instruction Unit) lowering, which replaces global→shared memory copies with asynchronous AIU load instructions for latency hiding. |
-| `tl.disable_ldmat_swzl` | When set to `False`, enables `ldmatrix.swzl` mode on `ppu0015`, which loads data from swizzled shared memory directly into MMA fragments, reducing shared memory bank conflicts. |
+| `tl.disable_ldmat_swzl` | Defaults to `False`, so `ldmatrix.swzl` mode is enabled on `ppu0015`: data is loaded from swizzled shared memory directly into MMA fragments, reducing shared memory bank conflicts. Set to `True` to fall back to plain `ldmatrix` in `T.gemm` and `T.copy`. |
 
 Example usage:
 
@@ -32,7 +32,7 @@ from tilelang.transform import PassConfigKey
 
 pass_configs = {
     PassConfigKey.TL_DISABLE_AIU_LOWER: False,      # Enable AIU lowering
-    PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,      # Enable ldmatrix.swzl
+    PassConfigKey.TL_DISABLE_LDMAT_SWZL: False,     # Default; set True to disable ldmatrix.swzl
 }
 
 @tilelang.jit(pass_configs=pass_configs)

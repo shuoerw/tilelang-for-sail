@@ -1417,6 +1417,16 @@ TVM_DLL const Op &ptx_cluster_store();
 TVM_DLL const Op &tma_store_cluster();
 
 /*!
+ * \brief PPU 8-bit transposed matrix load.
+ *
+ * tix_ldmatrix_b8(matrix_type, num, shared_addr, local_addr)
+ *
+ * The supported x2 form loads two 16x16 matrices. matrix_type 0 preserves
+ * the A-operand register order; 1 swaps the middle two registers for B.
+ */
+TVM_DLL const Op &tix_ldmatrix_b8();
+
+/*!
  * \brief PPU ldmatrix intrinsic using swizzled bulk tensor load.
  *
  * tix_ldmatrix_swzl(transposed, num, shared_addr, local_addr, swzl_mode,

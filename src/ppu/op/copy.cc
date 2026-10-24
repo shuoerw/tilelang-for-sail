@@ -14,6 +14,7 @@
 #include "layout/layout.h"
 #include "op/builtin.h"
 #include "op/utils.h"
+#include "ppu/layout/ppu_gemm_layouts.h"
 #include "ppu/op/copy.h"
 #include "transform/common/loop_fusion_utils.h"
 #include "transform/loop_partition.h"
@@ -40,6 +41,8 @@ using namespace tirx;
 using namespace ffi;
 
 namespace {
+constexpr int kRegisterBits = 32;
+constexpr int kLdsmRowBits = 128;
 
 PrimExpr AiuBytesFromElements(PrimExpr elements, DataType dtype) {
   PrimExpr elements_i64 = cast(DataType::Int(64), elements);
@@ -488,6 +491,7 @@ Stmt Copy::Lower(const CopyNode &op, const LowerArgs &lower_args,
   } else {
     LOG(FATAL) << "Unsupported copy inst " << static_cast<int>(copy_inst);
   }
+  return Stmt();
 }
 
 Stmt Copy::LowerCPAsync(const CopyNode &op, const LowerArgs &lower_args,
@@ -601,17 +605,20 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
 
   Buffer shared_tensor = src;
   Buffer local_tensor = dst;
-  Array<Range> local_region = src_range;
-  bool is_full_range = true;
-  for (size_t i = 0; i < local_region.size(); i++) {
-    if (!analyzer->CanProveEqual(local_region[i]->extent,
-                                 local_tensor->shape[i])) {
-      is_full_range = false;
-      break;
-    }
-  }
-  if (!is_full_range) {
+  const DataType dtype = shared_tensor->dtype;
+  const int shared_dtype_bits = dtype.bits();
+  const bool is_fp4 = dtype.is_float4_e2m1fn();
+  const bool is_b8 = shared_dtype_bits == 8 &&
+                     (dtype.is_int() || dtype.is_uint() || dtype.is_float8());
+  if (!dtype.is_scalar() || local_tensor->dtype != dtype ||
+      !(is_fp4 || is_b8 || shared_dtype_bits == 16)) {
     return LowerNormal(op, lower_args, analyzer);
+  }
+  for (size_t i = 0; i < dst_range.size(); ++i) {
+    if (!is_zero(dst_range[i]->min) ||
+        !analyzer->CanProveEqual(dst_range[i]->extent, dst->shape[i])) {
+      return LowerNormal(op, lower_args, analyzer);
+    }
   }
 
   Array<PrimExpr> local_indices = op.MakeIndices(loop_vars, 1);
@@ -630,91 +637,467 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
   IterVar row_var = loop_vars[loop_vars.size() - 2];
   PrimExpr local_layout_thread_map =
       FloorMod(local_layout->ForwardThread(local_indices, std::nullopt), 32);
-  PrimExpr matrix_8x8_thread_map = MakeGemmFragment8x8()->ForwardThread(
-      {FloorMod(row_var, 8), FloorMod(col_var, 8)}, std::nullopt);
-  PrimExpr matrix_8x8_thread_map_trans =
-      MakeGemmFragment8x8Transposed()->ForwardThread(
-          {FloorMod(row_var, 8), FloorMod(col_var, 8)}, std::nullopt);
   PrimExpr local_indices_flattened =
       local_tensor.OffsetOf(local_indices_transformed).back();
-  if (analyzer->CanProveEqual(matrix_8x8_thread_map, local_layout_thread_map) &&
-      IndicesCanVectorize(local_indices_flattened, col_var->var,
-                          col_var->dom->extent, 2, analyzer)) {
-    is_transposed = false;
-  } else if (analyzer->CanProveEqual(matrix_8x8_thread_map_trans,
-                                     local_layout_thread_map) &&
-             IndicesCanVectorize(local_indices_flattened, row_var->var,
-                                 row_var->dom->extent, 2, analyzer)) {
-    is_transposed = true;
-  } else {
-    return LowerNormal(op, lower_args, analyzer);
-  }
-  if (shared_tensor->dtype.bytes() != 2) {
-    return LowerNormal(op, lower_args, analyzer);
-  }
-  PrimExpr flattened_indice = shared_tensor.OffsetOf(shared_indices).back();
-  if (!IndicesCanVectorize(flattened_indice, loop_vars.back()->var,
-                           loop_vars.back()->dom->extent, 8, analyzer)) {
-    return LowerNormal(op, lower_args, analyzer);
-  }
+  if (is_b8 && TargetHasAiuCopy(lower_args.target)) {
+    // PPU0015 ldmatrix.x2.trans.m16n16.shared.b8 loads 16 int8 per 16-byte
+    // row. Validate the common copy constraints once before matching the A/B
+    // register order. If any gate fails the copy falls through to the 8x16
+    // non-transposed matcher (and finally to LowerNormal), instead of being
+    // rejected outright: those non-transposed b8 copies are supported below.
+    auto try_b8_trans_ldsm = [&]() -> Optional<Stmt> {
+      PrimExpr thread_extent = local_layout->ThreadExtent();
+      if (!lower_args.thread_bounds.defined() ||
+          !analyzer->CanProveEqual(FloorMod(thread_extent, 32), 0) ||
+          !analyzer->CanProveEqual(FloorMod(lower_args.thread_bounds->min, 32),
+                                   0) ||
+          !analyzer->CanProveEqual(thread_extent,
+                                   lower_args.thread_bounds->extent)) {
+        return std::nullopt;
+      }
+      std::vector<size_t> varying_dims;
+      for (size_t i = 0; i < dst_range.size(); ++i) {
+        if (!is_one(dst_range[i]->extent)) {
+          varying_dims.push_back(i);
+        }
+      }
+      if (varying_dims.size() < 2) {
+        return std::nullopt;
+      }
+      const size_t row_dim = varying_dims[varying_dims.size() - 2];
+      const size_t col_dim = varying_dims.back();
+      if (!analyzer->CanProveEqual(FloorMod(row_var->dom->extent, 16), 0) ||
+          !analyzer->CanProveEqual(FloorMod(col_var->dom->extent, 16), 0)) {
+        return std::nullopt;
+      }
+      const int step = 16;
+      PrimExpr extent = local_tensor->shape[0];
+      if (!analyzer->CanProveEqual(FloorMod(extent, step), 0)) {
+        return std::nullopt;
+      }
+      PrimExpr logical_elements = local_layout->ReplicateExtent();
+      for (const PrimExpr &dim : local_layout->InputShape()) {
+        logical_elements = logical_elements * dim;
+      }
+      // Do not emit loads for padding holes in a fragment's local storage.
+      if (!analyzer->CanProveEqual(logical_elements, extent * thread_extent) ||
+          !local_layout->DetectInjective()->errors.empty()) {
+        return std::nullopt;
+      }
+      Layout inverse = local_layout->Inverse();
+      // RR operands can be replicated across warps. Check every replica in
+      // its valid range instead of leaving the layout placeholder unbound.
+      Var replica("ldmatrix_rep", local_layout->ReplicateExtent().dtype());
+      analyzer->Bind(replica, Range(0, local_layout->ReplicateExtent()));
+      PrimExpr local_index = analyzer->Simplify(Substitute(
+          local_indices_flattened, {{ReplicationPlaceholder(), replica}}));
+      PrimExpr thread = analyzer->Simplify(
+          local_layout->ForwardThread(local_indices, replica));
+      PrimExpr packet = FloorDiv(local_index, step) * step;
+      Var local_iter("ldmatrix_i", extent.dtype());
+      PrimExpr iterations = FloorDiv(extent, step);
+      analyzer->Bind(local_iter, Range(0, iterations));
+      PrimExpr thread_id =
+          lower_args.thread_var - lower_args.thread_bounds->min;
+      PrimExpr lane = FloorMod(thread_id, 32);
+      PrimExpr load_thread =
+          FloorDiv(thread_id, 32) * 32 + FloorDiv(FloorMod(lane, 16), 4);
 
-  for (size_t i = 0; i < dst_range.size(); i++) {
-    if (!is_zero(dst_range[i]->min) ||
-        !analyzer->CanProveEqual(dst_range[i]->extent, dst->shape[i]))
+      auto physical_offset = [&](const Array<PrimExpr> &coords) -> PrimExpr {
+        if (lower_args.layout_map.count(shared_tensor)) {
+          Array<PrimExpr> physical_coords =
+              lower_args.layout_map[shared_tensor]->Forward(coords);
+          return lower_args.buffer_remap[shared_tensor]
+              .OffsetOf(physical_coords)
+              .back();
+        }
+        return shared_tensor.OffsetOf(coords).back();
+      };
+      auto try_trans_b8_x2 = [&](int matrix_type) -> Optional<Stmt> {
+        // B swaps registers 1 and 2; A uses the raw order.
+        const int matrix_step = matrix_type == 1 ? 4 : 8;
+        const int col_half_step = matrix_type == 1 ? 8 : 4;
+        PrimExpr matrix = FloorMod(FloorDiv(local_index, matrix_step), 2);
+        Array<PrimExpr> expected = inverse->Forward(
+            {packet + matrix * matrix_step, FloorDiv(thread, 32) * 32});
+        expected.pop_back(); // Fragment inverse also returns the replica index.
+        expected.Set(row_dim, expected[row_dim] + 4 * FloorMod(thread, 4) +
+                                  FloorMod(local_index, 4));
+        expected.Set(col_dim,
+                     expected[col_dim] + FloorDiv(FloorMod(thread, 32), 4) +
+                         8 * FloorMod(FloorDiv(local_index, col_half_step), 2));
+        for (size_t i = 0; i < local_indices.size(); ++i) {
+          if (!analyzer->CanProveEqual(analyzer->Simplify(expected[i]),
+                                       local_indices[i])) {
+            return std::nullopt;
+          }
+        }
+
+        // Each half warp supplies the rows of one 16x16 matrix.
+        PrimExpr load_index = local_iter * step + FloorMod(lane, 4) +
+                              matrix_step * FloorDiv(lane, 16);
+        Array<PrimExpr> local_coords =
+            inverse->Forward({load_index, load_thread});
+        local_coords.pop_back();
+        Map<Var, PrimExpr> substitutions;
+        for (size_t i = 0; i < varying_dims.size(); ++i) {
+          substitutions.Set(loop_vars[i]->var, local_coords[varying_dims[i]]);
+        }
+        Array<PrimExpr> row_coords;
+        for (const PrimExpr &index : shared_indices) {
+          row_coords.push_back(
+              analyzer->Simplify(Substitute(index, substitutions)));
+        }
+
+        PrimExpr row_offset = analyzer->Simplify(physical_offset(row_coords));
+        if (!analyzer->CanProveEqual(FloorMod(row_offset, 16), 0)) {
+          return std::nullopt;
+        }
+        // The instruction only receives a row pointer: remapping that pointer
+        // cannot repair a layout which permutes bytes inside its 16B row.
+        for (int j = 1; j < 16; ++j) {
+          Map<Var, PrimExpr> element_substitutions = substitutions;
+          element_substitutions.Set(col_var->var,
+                                    substitutions[col_var->var] + j);
+          Array<PrimExpr> element_coords;
+          for (const PrimExpr &index : shared_indices) {
+            element_coords.push_back(Substitute(index, element_substitutions));
+          }
+          if (!analyzer->CanProveEqual(physical_offset(element_coords),
+                                       row_offset + j)) {
+            return std::nullopt;
+          }
+        }
+
+        // Keep logical shared coordinates here. LowerTileOp applies the shared
+        // layout once; this path deliberately does not use tix_ldmatrix_swzl.
+        PrimExpr shared_addr =
+            Call(DataType::Handle(), tl::access_ptr(),
+                 {BufferLoad(shared_tensor, row_coords), PrimExpr(16),
+                  make_const(DataType::Int(32), 1)});
+        PrimExpr local_addr =
+            Call(DataType::Handle(), tl::access_ptr(),
+                 {BufferLoad(local_tensor, {local_iter * step}), PrimExpr(step),
+                  make_const(DataType::Int(32), 2)});
+        Stmt body = Evaluate(
+            Call(DataType::Handle(), tl::tix_ldmatrix_b8(),
+                 {Integer(matrix_type), Integer(2), shared_addr, local_addr}));
+        body = PragmaUnrollLoop(
+            For(local_iter, 0, iterations, ForKind::kSerial, body));
+        if (lower_args.require_smem_alignment) {
+          lower_args.require_smem_alignment(shared_tensor->data, 16);
+        }
+        return body;
+      };
+      if (auto result = try_trans_b8_x2(0)) {
+        return result;
+      }
+      if (auto result = try_trans_b8_x2(1)) {
+        return result;
+      }
+      return std::nullopt;
+    };
+    if (auto result = try_b8_trans_ldsm()) {
+      return result.value();
+    }
+  }
+  if (is_fp4) {
+    const int row_elements = kLdsmRowBits / shared_dtype_bits;
+    PrimExpr matrix_8x32_thread_map =
+        MakeGemmFragment8x32PPU(shared_dtype_bits)
+            ->ForwardThread(
+                {FloorMod(row_var, 8), FloorMod(col_var, row_elements)},
+                std::nullopt);
+    if (analyzer->CanProveEqual(matrix_8x32_thread_map,
+                                local_layout_thread_map) &&
+        IndicesCanVectorize(local_indices_flattened, col_var->var,
+                            col_var->dom->extent,
+                            kRegisterBits / shared_dtype_bits, analyzer)) {
+      is_transposed = false;
+    } else {
       return LowerNormal(op, lower_args, analyzer);
+    }
+  } else if (is_b8) {
+    // b8: match against 8x16 fragment (ldmatrix.b16 carries 16 int8 per row)
+    PrimExpr matrix_8x16_thread_map = MakeGemmFragment8x16PPU()->ForwardThread(
+        {FloorMod(row_var, 8), FloorMod(col_var, 16)}, std::nullopt);
+    if (analyzer->CanProveEqual(matrix_8x16_thread_map,
+                                local_layout_thread_map) &&
+        IndicesCanVectorize(local_indices_flattened, col_var->var,
+                            col_var->dom->extent, 4, analyzer)) {
+      is_transposed = false;
+    } else {
+      return LowerNormal(op, lower_args, analyzer);
+    }
+  } else {
+    PrimExpr matrix_8x8_thread_map = MakeGemmFragment8x8()->ForwardThread(
+        {FloorMod(row_var, 8), FloorMod(col_var, 8)}, std::nullopt);
+    PrimExpr matrix_8x8_thread_map_trans =
+        MakeGemmFragment8x8Transposed()->ForwardThread(
+            {FloorMod(row_var, 8), FloorMod(col_var, 8)}, std::nullopt);
+    if (analyzer->CanProveEqual(matrix_8x8_thread_map,
+                                local_layout_thread_map) &&
+        IndicesCanVectorize(local_indices_flattened, col_var->var,
+                            col_var->dom->extent, 2, analyzer)) {
+      is_transposed = false;
+    } else if (analyzer->CanProveEqual(matrix_8x8_thread_map_trans,
+                                       local_layout_thread_map) &&
+               IndicesCanVectorize(local_indices_flattened, row_var->var,
+                                   row_var->dom->extent, 2, analyzer)) {
+      is_transposed = true;
+    } else {
+      return LowerNormal(op, lower_args, analyzer);
+    }
+  }
+  const int elems_per_reg = kRegisterBits / shared_dtype_bits;
+  PrimExpr flattened_indice = shared_tensor.OffsetOf(shared_indices).back();
+  // ldmatrix reads 128 bits per row: 8 b16 elements or 16 int8 elements
+  int smem_vectorize_factor = kLdsmRowBits / shared_dtype_bits;
+  if (!IndicesCanVectorize(flattened_indice, loop_vars.back()->var,
+                           loop_vars.back()->dom->extent, smem_vectorize_factor,
+                           analyzer)) {
+    return LowerNormal(op, lower_args, analyzer);
   }
 
   PrimExpr extent = local_tensor->shape[0];
   int num = 1;
-  if (analyzer->CanProveEqual(FloorMod(extent, 8), 0))
+  if (analyzer->CanProveEqual(FloorMod(extent, elems_per_reg * 4), 0))
     num = 4;
-  else if (analyzer->CanProveEqual(FloorMod(extent, 4), 0))
+  else if (analyzer->CanProveEqual(FloorMod(extent, elems_per_reg * 2), 0))
     num = 2;
+
+  // The PPU0015 x1 template does not preserve the b8 fragment's byte map.
+  if (is_b8 && num == 1 && TargetHasAiuCopy(lower_args.target)) {
+    return LowerNormal(op, lower_args, analyzer);
+  }
+
+  // --- Swzl path: PPU0015 + swizzled shared layout + num==4 ---
+  // The bulk-tensor swzl ldmatrix reads a warp-uniform base address and
+  // de-swizzles in hardware, so all dynamic addressing (warp base, iteration,
+  // slice offsets) is folded into the logical shared coordinates below;
+  // PPULowerTileOp rewrites the access_ptr through the swizzle layout and
+  // binds the thread term to the warp base (same treatment as the gemm macros).
+  auto try_swzl_ldmatrix = [&]() -> Optional<Stmt> {
+    if (tvm::transform::PassContext::Current()
+            ->GetConfig<Bool>(kDisableLdmatSwzl, Bool(false))
+            .value()) {
+      return std::nullopt;
+    }
+    if (num != 4 || (is_transposed && shared_dtype_bits != 16) ||
+        !TargetPPUHasLdmatrixSwzl(lower_args.target))
+      return std::nullopt;
+    size_t shared_ndim = shared_tensor->shape.size();
+    if (shared_ndim < 2)
+      return std::nullopt;
+    const int64_t *M_dim_ptr =
+        as_const_int(shared_tensor->shape[shared_ndim - 2]);
+    if (!M_dim_ptr || *M_dim_ptr % 16 != 0)
+      return std::nullopt;
+    const int matrix_k_width = kLdsmRowBits / shared_dtype_bits;
+    const int64_t *K_extent_ptr =
+        as_const_int(src_range[src_range.size() - 1]->extent);
+    if (!K_extent_ptr || *K_extent_ptr < 2 * matrix_k_width)
+      return std::nullopt;
+
+    if (!lower_args.layout_map.count(shared_tensor))
+      return std::nullopt;
+    SwizzleMode swizzle_mode = DetectSwizzleMode(
+        lower_args.layout_map.at(shared_tensor), shared_tensor);
+    if (swizzle_mode != SwizzleMode::Swizzle128B() &&
+        swizzle_mode != SwizzleMode::Swizzle64B())
+      return std::nullopt;
+    const int swzl_mode_val =
+        (swizzle_mode == SwizzleMode::Swizzle128B()) ? 0 : 1;
+
+    const int step = elems_per_reg;
+    const int packet_size = step * num;
+    PrimExpr thread_extent = local_layout->ThreadExtent();
+    if (!lower_args.thread_bounds.defined() ||
+        !analyzer->CanProveEqual(FloorMod(thread_extent, 32), 0) ||
+        !analyzer->CanProveEqual(FloorMod(lower_args.thread_bounds->min, 32),
+                                 0) ||
+        !analyzer->CanProveEqual(thread_extent,
+                                 lower_args.thread_bounds->extent)) {
+      return std::nullopt;
+    }
+    PrimExpr logical_elements = local_layout->ReplicateExtent();
+    for (const PrimExpr &dim : local_layout->InputShape()) {
+      logical_elements = logical_elements * dim;
+    }
+    if (!analyzer->CanProveEqual(logical_elements, extent * thread_extent) ||
+        !local_layout->DetectInjective()->errors.empty()) {
+      return std::nullopt;
+    }
+
+    Layout inv = local_layout->Inverse();
+    // Bulk x4 loads require a 2x2 arrangement of 8-row matrices. The fragment
+    // mapping must match one register order across all elements, packets,
+    // warps, and replicas.
+    Var replica("swzl_rep", local_layout->ReplicateExtent().dtype());
+    analyzer->Bind(replica, Range(0, local_layout->ReplicateExtent()));
+    PrimExpr local_index = analyzer->Simplify(Substitute(
+        local_indices_flattened, {{ReplicationPlaceholder(), replica}}));
+    PrimExpr thread =
+        analyzer->Simplify(local_layout->ForwardThread(local_indices, replica));
+    PrimExpr packet = FloorDiv(local_index, packet_size) * packet_size;
+    Array<PrimExpr> packet_coords =
+        inv->Forward({packet, FloorDiv(thread, 32) * 32});
+    packet_coords.pop_back(); // Drop the inverse's replica coordinate.
+    if (packet_coords.size() < 2 || packet_coords.size() > shared_ndim)
+      return std::nullopt;
+    const size_t row_dim = packet_coords.size() - 2;
+    const size_t col_dim = packet_coords.size() - 1;
+    PrimExpr lane = FloorMod(thread, 32);
+    PrimExpr matrix = FloorMod(FloorDiv(local_index, step), num);
+    PrimExpr row_in_matrix =
+        is_transposed ? step * FloorMod(lane, 4) + FloorMod(local_index, step)
+                      : FloorDiv(lane, 4);
+    PrimExpr col_in_matrix =
+        is_transposed ? FloorDiv(lane, 4)
+                      : step * FloorMod(lane, 4) + FloorMod(local_index, step);
+    auto matches_packet = [&](bool trans_block) {
+      Array<PrimExpr> expected = packet_coords;
+      PrimExpr matrix_row = FloorDiv(matrix, 2);
+      PrimExpr matrix_col = FloorMod(matrix, 2);
+      if (!trans_block)
+        std::swap(matrix_row, matrix_col);
+      expected.Set(row_dim, expected[row_dim] + 8 * matrix_row + row_in_matrix);
+      expected.Set(col_dim, expected[col_dim] + matrix_k_width * matrix_col +
+                                col_in_matrix);
+      for (size_t i = 0; i < local_indices.size(); ++i) {
+        if (!analyzer->CanProveEqual(analyzer->Simplify(expected[i]),
+                                     local_indices[i])) {
+          return false;
+        }
+      }
+      return true;
+    };
+    int trans_block;
+    if (matches_packet(true)) {
+      trans_block = 1;
+    } else if (matches_packet(false)) {
+      trans_block = 0;
+    } else {
+      return std::nullopt;
+    }
+
+    // Warp-uniform base coordinates: leading dims (stage/panel) from the copy
+    // range mins, spatial dims from the fragment inverse at (iter, warp).
+    Var local_iter("i", extent.dtype());
+    PrimExpr warp = FloorDiv(lower_args.thread_var, 32) * 32;
+    Array<PrimExpr> iter_shared_coords =
+        inv->Forward({local_iter * step * num, warp});
+    for (size_t i = 0; i < iter_shared_coords.size(); ++i)
+      iter_shared_coords.Set(i, analyzer->Simplify(iter_shared_coords[i]));
+    iter_shared_coords.pop_back();
+    size_t spatial_dims = iter_shared_coords.size();
+    if (spatial_dims < 2)
+      return std::nullopt;
+    if (spatial_dims > shared_ndim)
+      return std::nullopt;
+    size_t leading = shared_ndim - spatial_dims;
+
+    Array<PrimExpr> full_coords;
+    for (size_t i = 0; i < leading; ++i)
+      full_coords.push_back(src_range[i]->min);
+    for (size_t i = 0; i < spatial_dims; ++i) {
+      PrimExpr coord = iter_shared_coords[i];
+      PrimExpr range_min = src_range[leading + i]->min;
+      full_coords.push_back(is_zero(range_min) ? coord : coord + range_min);
+    }
+
+    PrimExpr shared_addr =
+        Call(DataType::Handle(), tl::access_ptr(),
+             {BufferLoad(shared_tensor, full_coords), PrimExpr(step * num),
+              make_const(DataType::Int(32), 1)});
+    PrimExpr local_addr =
+        Call(DataType::Handle(), tl::access_ptr(),
+             {BufferLoad(local_tensor, {local_iter * step * num}),
+              PrimExpr(step * num), make_const(DataType::Int(32), 2)});
+    auto body =
+        Evaluate(Call(DataType::Handle(), tl::tix_ldmatrix_swzl(),
+                      {Integer(is_transposed), Integer(num), shared_addr,
+                       local_addr, make_const(DataType::Int(32), swzl_mode_val),
+                       make_const(DataType::Int(32), trans_block)}));
+    For for_node = For(local_iter, 0, FloorDiv(extent, step * num),
+                       ForKind::kSerial, body);
+    for_node = PragmaUnrollLoop(for_node);
+    auto range = lower_args.thread_bounds;
+    if (range.defined()) {
+      auto thread_var = lower_args.thread_var;
+      auto thread_var_with_offset = thread_var - range->min;
+      for_node.CopyOnWrite()->body =
+          Substitute(for_node->body, {{thread_var, thread_var_with_offset}});
+    }
+    return for_node;
+  };
+  if (auto swzl_stmt = try_swzl_ldmatrix())
+    return swzl_stmt.value();
+  // --- End swzl path (fallthrough to standard ldmatrix) ---
 
   Array<PrimExpr> args;
   const Op &copy_op = tl::ptx_ldmatrix();
   args.push_back(static_cast<int>(is_transposed));
   args.push_back(num);
 
-  Var local_iter("i");
+  Var local_iter("i", extent.dtype());
   Layout inv = local_layout->Inverse();
   Array<PrimExpr> shared_coords;
   PrimExpr warp = FloorDiv(lower_args.thread_var, 32) * 32;
   if (!is_transposed) {
     auto local_index = analyzer->Simplify(
-        local_iter * 2 * num +
-        2 * FloorMod(FloorDiv(lower_args.thread_var, 8), num));
+        local_iter * elems_per_reg * num +
+        elems_per_reg * FloorMod(FloorDiv(lower_args.thread_var, 8), num));
     auto thread_index =
         analyzer->Simplify(warp + FloorMod(lower_args.thread_var, 8) * 4);
     shared_coords = inv->Forward({local_index, thread_index});
   } else {
     auto local_index = analyzer->Simplify(
-        local_iter * 2 * num +
-        2 * FloorMod(FloorDiv(lower_args.thread_var, 8), num) +
-        FloorMod(lower_args.thread_var, 2));
+        local_iter * elems_per_reg * num +
+        elems_per_reg * FloorMod(FloorDiv(lower_args.thread_var, 8), num) +
+        FloorMod(lower_args.thread_var, elems_per_reg));
     auto thread_index = analyzer->Simplify(
-        warp + FloorDiv(FloorMod(lower_args.thread_var, 8), 2));
+        warp + FloorDiv(FloorMod(lower_args.thread_var, 8), elems_per_reg));
     shared_coords = inv->Forward({local_index, thread_index});
   }
   shared_coords.pop_back();
+  // Map fragment-space coordinates back to shared-memory coordinates.
+  // inv->Forward gives coords in the fragment's logical space [0..M,
+  // 0..K_tile). When the shared buffer is sliced (e.g. A_shared[:,
+  // ki*16:(ki+1)*16]) or multi-buffered (e.g. A_shared[stage, :, :]), we must:
+  //   1. Prepend leading dimensions from the copy's range (stage index).
+  //   2. Add slice offsets (range.min) to each spatial coordinate.
+  {
+    if (shared_coords.size() > shared_tensor->shape.size()) {
+      return LowerNormal(op, lower_args, analyzer);
+    }
+    Array<PrimExpr> full_coords;
+    size_t leading = shared_tensor->shape.size() - shared_coords.size();
+    for (size_t i = 0; i < leading; ++i) {
+      full_coords.push_back(src_range[i]->min);
+    }
+    for (size_t i = 0; i < shared_coords.size(); ++i) {
+      PrimExpr offset = src_range[leading + i]->min;
+      full_coords.push_back(is_zero(offset) ? shared_coords[i]
+                                            : shared_coords[i] + offset);
+    }
+    shared_coords = full_coords;
+  }
   PrimExpr shared_addr =
       Call(DataType::Handle(), tl::access_ptr(),
-           {BufferLoad(shared_tensor, shared_coords), PrimExpr(2 * num),
-            make_const(DataType::Int(32), 1)});
+           {BufferLoad(shared_tensor, shared_coords),
+            PrimExpr(elems_per_reg * num), make_const(DataType::Int(32), 1)});
   args.push_back(shared_addr);
 
-  if (local_tensor->dtype != shared_tensor->dtype) {
-    return LowerNormal(op, lower_args, analyzer);
-  }
   PrimExpr local_addr =
       Call(DataType::Handle(), tl::access_ptr(),
-           {BufferLoad(local_tensor, {local_iter * 2 * num}), PrimExpr(2 * num),
-            make_const(DataType::Int(32), 2)});
+           {BufferLoad(local_tensor, {local_iter * elems_per_reg * num}),
+            PrimExpr(elems_per_reg * num), make_const(DataType::Int(32), 2)});
   args.push_back(local_addr);
 
   auto body = Evaluate(Call(DataType::Handle(), copy_op, args));
-  For for_node =
-      For(local_iter, 0, FloorDiv(extent, 2 * num), ForKind::kSerial, body);
+  For for_node = For(local_iter, 0, FloorDiv(extent, elems_per_reg * num),
+                     ForKind::kSerial, body);
   for_node = PragmaUnrollLoop(for_node);
   auto range = lower_args.thread_bounds;
   if (range.defined()) {

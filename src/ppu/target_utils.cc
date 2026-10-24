@@ -59,6 +59,10 @@ bool TargetPPUHasLdmatrix(Target target) {
   return true;
 }
 
+bool TargetPPUHasLdmatrixSwzl(const Target &target) {
+  return TargetIsPPU(target) && GetPPUArchInt(target) == 15;
+}
+
 bool TargetPPUHasStmatrix(Target target) { return false; }
 
 bool IsPpuVectorizableFP8(DataType dtype) {

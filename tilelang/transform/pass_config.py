@@ -127,7 +127,7 @@ class PassConfigKey(str, Enum):
     """
 
     TL_DISABLE_LDMAT_SWZL = "tl.disable_ldmat_swzl"
-    """Disable PPU1.5 ldmatrix swizzled bulk tensor load lowering. Default: True"""
+    """Disable PPU1.5 ldmatrix swizzled bulk tensor load lowering. Default: False"""
 
     TL_ENABLE_LOWER_LDGSTG = "tl.enable_lower_ldgstg"
     """Enable non-predicated LDG/STG lowering for global memory access.
