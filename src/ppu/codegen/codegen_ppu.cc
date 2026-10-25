@@ -695,6 +695,9 @@ std::string CodeGenTileLangPPU::Finish() {
   if (need_cooperative_groups_) {
     decl_stream << "#include <cooperative_groups.h>\n";
   }
+  if (need_grid_sync_) {
+    decl_stream << "#include <tl_templates/ppu/grid_sync.h>\n";
+  }
 
   if (need_acrand_kernel_h_) {
     decl_stream << "#include <acrand_kernel.h>\n";
@@ -2547,8 +2550,9 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
     print_extern_call_expr(os, "tl::pack_b8x4");
   } else if (op->op.same_as(tl::sync_grid())) {
     this->need_cooperative_groups_ = true;
+    this->need_grid_sync_ = true;
     this->PrintIndent();
-    this->stream << "cooperative_groups::this_grid().sync();\n";
+    this->stream << "tl::sync_grid();\n";
   } else if (op->op.same_as(tl::sync_warp())) {
     this->PrintIndent();
     this->stream << "__syncwarp(";

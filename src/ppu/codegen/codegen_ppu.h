@@ -134,6 +134,8 @@ private:
   bool use_actlize_ldmatrix_{false};
   // whether need cooperative_groups.h
   bool need_cooperative_groups_{false};
+  // whether need the PPU cooperative grid barrier helper
+  bool need_grid_sync_{false};
   // whether need acrand_kernel.h
   bool need_acrand_kernel_h_{false};
   // Op attribute map
