@@ -8,6 +8,7 @@ import tilelang.language as T
 import tilelang.testing
 
 
+# Device tests require this architecture; codegen-only tests do not launch.
 PPU_TARGET = {"kind": "ppu", "arch": "ppu_15"}
 
 
@@ -90,7 +91,7 @@ def test_ppu_no_grid_sync_codegen():
     assert "tl_templates/ppu/grid_sync.h" not in artifact.kernel_source
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_eq(1, 5)
 @pytest.mark.parametrize("compile_flags", [[], ["-D_HCG_ABI_VER=2"]])
 def test_ppu_grid_sync_compile(compile_flags):
     # Compile both the optimized path and the SDK fallback without a GPU launch.
@@ -98,7 +99,7 @@ def test_ppu_grid_sync_compile(compile_flags):
     assert "tl::sync_grid();" in compiled.get_kernel_source()
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_eq(1, 5)
 @pytest.mark.parametrize("grid", [(1, 1, 1), (3, 1, 1), (39, 1, 1), (2, 2, 2)])
 @pytest.mark.parametrize("block", [(32, 1, 1), (128, 1, 1), (512, 1, 1), (16, 2, 2)])
 def test_ppu_grid_sync_visibility(grid, block):
@@ -109,7 +110,7 @@ def test_ppu_grid_sync_visibility(grid, block):
     _check(data, errors, 2003)
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_eq(1, 5)
 def test_ppu_grid_sync_streams():
     grid, block = (3, 1, 1), (128, 1, 1)
     compiled = _compile(grid, block)
@@ -128,7 +129,7 @@ def test_ppu_grid_sync_streams():
         _check(*buffers[stream_id], 1000 * stream_id + 15)
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_eq(1, 5)
 def test_ppu_grid_sync_graph_replay():
     grid, block = (3, 1, 1), (128, 1, 1)
     compiled = _compile(grid, block)
@@ -154,7 +155,7 @@ def test_ppu_grid_sync_graph_replay():
         _check(*buffers[graph_id], 1000 * graph_id + 1)
 
 
-@tilelang.testing.requires_ppu
+@tilelang.testing.requires_ppu_compute_version_eq(1, 5)
 def test_ppu_grid_sync_sdk_fallback():
     grid, block = (3, 1, 1), (128, 1, 1)
     # Select another SDK ABI namespace to exercise the guarded SDK fallback.
