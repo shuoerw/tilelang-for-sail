@@ -15,7 +15,6 @@
  */
 
 #include "support/check.h"
-#include <tvm/ffi/extra/structural_equal.h>
 #include <tvm/tirx/analysis.h>
 #include <tvm/tirx/builtin.h>
 #include <tvm/tirx/stmt.h>
@@ -169,7 +168,7 @@ public:
   void VisitStmt_(const IfThenElseNode *op) final {
     // Skip the interior of any if statement with matching condition
     if (excluded_condition.defined() &&
-        StructuralEqual()(op->condition, excluded_condition)) {
+        ExprDeepEqual()(op->condition, excluded_condition)) {
       return;
     }
     StmtExprVisitor::VisitStmt_(op);
@@ -415,8 +414,8 @@ public:
   }
 
   Stmt VisitStmt_(const IfThenElseNode *op) final {
-    // Replace if the condition is structurally equal to the hoisted condition
-    if (StructuralEqual()(op->condition, hoisted_condition)) {
+    // Replace if the condition matches the hoisted condition.
+    if (ExprDeepEqual()(op->condition, hoisted_condition)) {
       if (take_then) {
         return VisitStmt(op->then_case);
       } else {
@@ -554,7 +553,7 @@ public:
         result = GetRef<Stmt>(op);
       } else {
         result = For(op->loop_var, op->min, op->extent, op->kind, body,
-                     op->thread_binding, op->annotations);
+                     op->thread_binding, op->annotations, op->step);
       }
       if (pushed_thread_idx) {
         thread_idx_vars_in_scope_.erase(op->loop_var.get());
@@ -574,7 +573,7 @@ public:
         result = GetRef<Stmt>(op);
       } else {
         result = For(op->loop_var, op->min, op->extent, op->kind, body,
-                     op->thread_binding, op->annotations);
+                     op->thread_binding, op->annotations, op->step);
       }
       if (pushed_thread_idx) {
         thread_idx_vars_in_scope_.erase(op->loop_var.get());
@@ -597,7 +596,7 @@ public:
     // two versions.
     if (!allow_non_trivial_else_ && !IsSideEffectFreeStmt(else_body)) {
       result = For(op->loop_var, op->min, op->extent, op->kind, body,
-                   op->thread_binding, op->annotations);
+                   op->thread_binding, op->annotations, op->step);
       if (pushed_thread_idx) {
         thread_idx_vars_in_scope_.erase(op->loop_var.get());
       }
@@ -609,9 +608,9 @@ public:
     else_body = Substitute(else_body, {{op->loop_var, else_loop_var}});
 
     For then_loop(op->loop_var, op->min, op->extent, op->kind, then_body,
-                  op->thread_binding, op->annotations);
+                  op->thread_binding, op->annotations, op->step);
     For else_loop(else_loop_var, op->min, op->extent, op->kind, else_body,
-                  op->thread_binding, op->annotations);
+                  op->thread_binding, op->annotations, op->step);
 
     result = IfThenElse(if_node->condition, then_loop, else_loop);
 

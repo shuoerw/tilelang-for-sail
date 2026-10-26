@@ -237,6 +237,7 @@ class _BenchmarkWorkerState:
     jit_input_tensors: Any = None
     ref_input_tensors: Any = None
     ref_latency_cache: float | None = None
+    shared_best_latency: list[float] | None = None
 
 
 class AutoTuner:
@@ -461,8 +462,22 @@ class AutoTuner:
                     "Please provide concrete inputs with `with set_autotune_inputs(...)`."
                 )
 
-    def generate_cache_key(self, parameters: dict[str, Any], extra_parameters: dict[str, Any]) -> AutotuneResult | None:
+    def generate_cache_key(self, parameters: dict[str, Any], extra_parameters: dict[str, Any]) -> str | None:
         """Generate a cache key for the auto-tuning process."""
+
+        # Arbitrary callbacks do not have a reliable persistent identity:
+        # importable functions may serialize by name, while closures may hold
+        # unpicklable runtime state. Avoid cache reuse rather than risk serving
+        # results produced with different input or validation behavior.
+        if any(
+            callback is not None
+            for callback in (
+                self.profile_args.ref_prog,
+                self.profile_args.supply_prog,
+                self.profile_args.manual_check_prog,
+            )
+        ):
+            return None
 
         # extract parameters from the function signature
         op_parameters = []
@@ -715,6 +730,7 @@ class AutoTuner:
                         jit_input_tensors=worker_state.jit_input_tensors,
                         ref_input_tensors=worker_state.ref_input_tensors,
                         ref_latency_cache=worker_state.ref_latency_cache,
+                        shared_best_latency=worker_state.shared_best_latency,
                     )
 
                     def _run_benchmark_target(
@@ -775,6 +791,7 @@ class AutoTuner:
         jit_kernel: tilelang.JITKernel,
         warmup: int,
         rep: int,
+        early_stop_factor: float,
         benchmark_state: _BenchmarkWorkerState,
         benchmark_device: int | torch.device | None = None,
     ) -> tuple[float, float | None]:
@@ -851,8 +868,9 @@ class AutoTuner:
             n_repeat=rep,
             input_tensors=jit_input_tensors_cache,
             backend=backend,
-            device=benchmark_device,
-            early_stop_baseline=(self._early_stop_best_latency * self._early_stop_factor if self._early_stop_enabled else None),
+            early_stop_baseline=(
+                benchmark_state.shared_best_latency[0] * early_stop_factor if benchmark_state.shared_best_latency is not None else None
+            ),
         )
 
         if ref_latency_cache is None and ref_prog is not None:
@@ -1002,7 +1020,7 @@ class AutoTuner:
         key = self.generate_cache_key(parameters, extra_parameters)
 
         with self._lock:
-            if env.is_cache_enabled() and not env.is_autotune_cache_disabled():
+            if key is not None and env.is_cache_enabled() and not env.is_autotune_cache_disabled():
                 # First check in-memory cache
                 if key in self._memory_cache:
                     # Include PrimFunc name when hitting autotuner memory cache
@@ -1025,6 +1043,7 @@ class AutoTuner:
         best_latency: float = float("inf")
         best_config: dict[str, Any] | None = None
         best_kernel: tilelang.JITKernel | None = None
+        shared_best_latency_ref: list[float] | None = [float("inf")] if early_stop else None
 
         # Thread-safe shared state for early_stop: workers read this to compute
         # the early_stop_baseline. Updated by the main thread in _record_benchmark_result.
@@ -1087,13 +1106,17 @@ class AutoTuner:
                 # compile the kernel with the provided parameters
                 jit_kernel = self.jit_compile()
                 autotuner_result = AutotuneResult(libcode=jit_kernel.get_kernel_source(), func=jit_kernel.prim_func, kernel=jit_kernel)
-                self._memory_cache[key] = autotuner_result
+                if key is not None:
+                    self._memory_cache[key] = autotuner_result
                 return autotuner_result
 
         # After confirming tuning will actually run, validate that scalar
         # inputs can be supplied (either via supply_prog or set_autotune_inputs).
-        if hasattr(self, "_prim_func_for_validation"):
-            self._validate_input_supply_requirements(self._prim_func_for_validation, self.compile_args.out_idx)
+        # Build the prim_func from a concrete config so tunable parameters are
+        # bound to real values instead of their ``None`` defaults, which would
+        # otherwise crash inside TVM (e.g. ceildiv with a None extent).
+        prim_func_for_validation = elaborate_func(**top_config)
+        self._validate_input_supply_requirements(prim_func_for_validation, self.compile_args.out_idx)
 
         # Launch compile tasks
         pool, futures, future_to_unit, compile_desc = self._prepare_compile_execution(
@@ -1109,6 +1132,7 @@ class AutoTuner:
             jit_input_tensors=self.jit_input_tensors,
             ref_input_tensors=self.ref_input_tensors,
             ref_latency_cache=self.ref_latency_cache,
+            shared_best_latency=shared_best_latency_ref,
         )
 
         def _record_benchmark_result(latency: float, config: dict[str, Any], jit_kernel: tilelang.JITKernel, idx: int, progress_bar):
@@ -1117,9 +1141,8 @@ class AutoTuner:
                 best_latency = latency
                 best_config = dict(self.configs[idx])
                 best_kernel = jit_kernel
-                # Update shared early_stop baseline for worker threads
-                if early_stop:
-                    self._early_stop_best_latency = best_latency
+                if shared_best_latency_ref is not None:
+                    shared_best_latency_ref[0] = latency
 
             progress_bar.set_postfix({"best_latency": best_latency})
             tqdm.write(f"Tuned Latency {latency} with config {self.configs[idx]} at index {idx}")
@@ -1144,6 +1167,7 @@ class AutoTuner:
             self._benchmark_target,
             warmup=warmup,
             rep=rep,
+            early_stop_factor=early_stop_factor,
         )
 
         def _enqueue_benchmark_task(jit_kernel: tilelang.JITKernel, config: dict[str, Any], idx: int):
@@ -1159,10 +1183,10 @@ class AutoTuner:
             progress_bar.update(1)
 
             if status == "timeout":
-                logger.warning(f"A timeout occurred while testing config {config}, checkout autotuner.log for more details")
+                logger.warning(f"A timeout occurred while testing config {self.configs[idx]}, checkout autotuner.log for more details")
                 return
             if status == "error":
-                logger.warning(f"An error occurred while testing config {config}, checkout autotuner.log for more details")
+                logger.warning(f"An error occurred while testing config {self.configs[idx]}, checkout autotuner.log for more details")
                 if error_text:
                     logger.debug(f"Error: {error_text}")
                 return
@@ -1185,7 +1209,11 @@ class AutoTuner:
 
         # Start benchmark worker threads
         for worker_idx, worker_device in enumerate(benchmark_worker_devices):
-            worker_state = _BenchmarkWorkerState() if benchmark_multi_gpu_active else main_thread_benchmark_state
+            worker_state = (
+                _BenchmarkWorkerState(shared_best_latency=shared_best_latency_ref)
+                if benchmark_multi_gpu_active
+                else main_thread_benchmark_state
+            )
             worker_thread = threading.Thread(
                 target=self._benchmark_worker_loop,
                 args=(
@@ -1228,7 +1256,7 @@ class AutoTuner:
                     compile_progress.update(len(unit_results))
                     for idx, config, jit_kernel, error in unit_results:
                         if error is not None:
-                            logger.debug(f"Compilation failed for config {config} at index {idx} with error: {error}")
+                            logger.debug(f"Compilation failed for config {self.configs[idx]} at index {idx} with error: {error}")
                             continue
                         assert jit_kernel is not None
                         _enqueue_benchmark_task(jit_kernel=jit_kernel, config=config, idx=idx)
@@ -1281,14 +1309,15 @@ class AutoTuner:
             kernel=best_kernel,
         )
 
-        if self.compile_args.execution_backend in ("torch"):
-            logger.warning("DLPack backend does not support cache saving to disk.")
+        if self.compile_args.execution_backend == "torch":
+            logger.warning("Torch backend does not support cache saving to disk.")
         else:
             with self._lock:
-                if env.is_cache_enabled() and not env.is_autotune_cache_disabled():
+                if key is not None and env.is_cache_enabled() and not env.is_autotune_cache_disabled():
                     self._save_result_to_disk(key, autotuner_result)
 
-        self._memory_cache[key] = autotuner_result
+        if key is not None:
+            self._memory_cache[key] = autotuner_result
 
         return autotuner_result
 
@@ -1395,10 +1424,6 @@ class AutoTuneImpl(Generic[_P, _T]):
 
         mode = self.jit_impl.initialize_jit_mode(*args, **kwargs)
         autotuner = self.get_tunner()
-        # Defer scalar-input validation to run(), after we know whether
-        # tuning will actually execute or be skipped because all tunable
-        # parameters are already provided by the caller.
-        autotuner._prim_func_for_validation = self.jit_impl.get_tir(*args, **kwargs)
 
         # Compute the cache key, excluding do_not_specialize parameters
         # so that changing them does not trigger re-autotuning.

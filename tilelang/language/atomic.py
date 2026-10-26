@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import tilelang.language as T
-from tvm import ir
-from tvm.tirx import PrimExpr, Buffer, op
+from tilelang._typing import BufferLikeType
+from tvm import DataType, ir
+from tvm.tirx import PrimExpr, Buffer, Var, op
 from tilelang.utils.language import to_buffer_region, legalize_pairwise_extents
 from tilelang.language.utils import get_extent
 
@@ -94,11 +95,12 @@ def atomic_max(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
     if dst_extent is None and src_extent is None:
         # Scalar path: use atomicmax_elem_op intrinsic
         return_type = dst.dtype if return_prev else "handle"
+        atomic_max_op = op.Op.get("tl.atomic_max_ret_elem_op") if return_prev else op.Op.get("tl.atomic_max_elem_op")
         memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order] if memory_order else 0
 
         return T.call_intrin(
             return_type,
-            op.Op.get("tl.atomic_max_elem_op"),
+            atomic_max_op,
             T.access_ptr(dst, "rw"),
             value,
             memory_order_id,
@@ -176,11 +178,12 @@ def atomic_min(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
     if dst_extent is None and src_extent is None:
         # Scalar path: use atomicmin_elem_op intrinsic
         return_type = dst.dtype if return_prev else "handle"
+        atomic_min_op = op.Op.get("tl.atomic_min_ret_elem_op") if return_prev else op.Op.get("tl.atomic_min_elem_op")
         memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order] if memory_order else 0
 
         return T.call_intrin(
             return_type,
-            op.Op.get("tl.atomic_min_elem_op"),
+            atomic_min_op,
             T.access_ptr(dst, "rw"),
             value,
             memory_order_id,
@@ -338,12 +341,12 @@ def atomic_add(
     return T.call_intrin("handle", op.Op.get("tl.tileop.atomicadd"), value, dst, annotations=ann if ann else None)
 
 
-def atomic_addx2(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> PrimExpr:
+def atomic_addx2(dst: BufferLikeType, value: BufferLikeType, return_prev: bool = False) -> PrimExpr:
     """Perform an atomic addition operation with double-width operands.
 
     Args:
-        dst (Buffer): Destination buffer where the atomic addition will be performed
-        value (PrimExpr): Value to be atomically added (double-width)
+        dst (BufferLikeType): Destination buffer where the atomic addition will be performed
+        value (BufferLikeType): Value to be atomically added (double-width)
         return_prev (bool): If True, return the previous value; if False, return handle (default False)
 
     Returns:
@@ -371,17 +374,17 @@ def atomic_addx2(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> Pri
         >>>         for j in range(0, grads.shape[1], 2):  # Process in pairs
         >>>             atomic_addx2(global_grads[i, j:j+2], grads[i, j:j+2])
     """
-    atomic_addx2_op = op.Op.get("tl.atomic_addx2_elem_op") if return_prev else op.Op.get("tl.atomic_addx2_elem_op")
-    return_type = dst.dtype if return_prev else "handle"
+    atomic_addx2_op = op.Op.get("tl.atomic_addx2_ret_elem_op") if return_prev else op.Op.get("tl.atomic_addx2_elem_op")
+    return_type = _vector_atomic_return_dtype(dst, 2) if return_prev else "handle"
     return T.call_intrin(return_type, atomic_addx2_op, T.access_ptr(dst, "rw"), T.access_ptr(value, "r"))
 
 
-def atomic_addx4(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> PrimExpr:
+def atomic_addx4(dst: BufferLikeType, value: BufferLikeType, return_prev: bool = False) -> PrimExpr:
     """Perform an atomic addition operation with quad-width operands.
 
     Args:
-        dst (Buffer): Destination buffer where the atomic addition will be performed
-        value (PrimExpr): Value to be atomically added (quad-width)
+        dst (BufferLikeType): Destination buffer where the atomic addition will be performed
+        value (BufferLikeType): Value to be atomically added (quad-width)
         return_prev (bool): If True, return the previous value; if False, return handle (default False)
 
     Returns:
@@ -409,8 +412,8 @@ def atomic_addx4(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> Pri
         >>> rgba_add = T.Tensor([4], "float32", name="rgba_add")
         >>> atomic_addx4(rgba_dst, rgba_add)  # Atomic blend of all 4 channels
     """
-    atomic_addx4_op = op.Op.get("tl.atomic_addx4_elem_op") if return_prev else op.Op.get("tl.atomic_addx4_elem_op")
-    return_type = "float4" if "float" in str(dst.dtype).lower() else "handle"
+    atomic_addx4_op = op.Op.get("tl.atomic_addx4_ret_elem_op") if return_prev else op.Op.get("tl.atomic_addx4_elem_op")
+    return_type = _vector_atomic_return_dtype(dst, 4) if return_prev else "handle"
     return T.call_intrin(return_type, atomic_addx4_op, T.access_ptr(dst, "rw"), T.access_ptr(value, "r"))
 
 
@@ -488,8 +491,8 @@ def atomic_store(
     Parameters:
         dst (Buffer): Destination buffer to store into.
         src (PrimExpr): Value to store.
-        memory_order (str, optional): Memory ordering name; one of "relaxed", "consume",
-            "acquire", "release", "acq_rel", or "seq_cst". Defaults to "seq_cst".
+        memory_order (str, optional): Memory ordering name; one of "relaxed", "release",
+            or "seq_cst". Defaults to "seq_cst".
             The name is mapped to an internal numeric ID used by the underlying runtime.
             For block and system scopes, only "relaxed", "release", and "seq_cst" are supported.
         scope (str): Memory visibility scope: ``"device"`` (default), ``"block"``, or ``"system"``.

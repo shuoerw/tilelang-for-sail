@@ -83,7 +83,7 @@ def run_api_mode():
             AutoTuner.from_kernel(kernel=make_kernel(), configs=configs).set_compile_args(out_idx=[-1], target="auto").set_profile_args()
         )
         start = time.perf_counter()
-        result = autotuner.run(warmup=5, rep=50, early_stop=early_stop)
+        result = autotuner.run(warmup=5, rep=50, early_stop=early_stop, early_stop_factor=1.2)
         wall = time.perf_counter() - start
         results[label] = (result, wall)
         print(f"[{label}] latency={result.latency:.4f}ms, wall={wall:.2f}s, config={result.config}")

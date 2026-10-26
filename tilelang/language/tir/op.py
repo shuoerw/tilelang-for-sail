@@ -1,11 +1,14 @@
 from __future__ import annotations
+
+from numbers import Integral
 from typing import Any
+
 import tvm
 from tvm.ir import PrimExpr
 from tvm.ir.base import Span
 from tvm.runtime import const
 from tvm.tirx import Buffer
-from tvm.tirx.expr import IntImm, PrimExprWithOp
+from tvm.tirx.expr import IntImm, PrimExprWithOp, Shuffle as Shuffle
 import tvm.tirx.op as _tvm_op
 
 from tilelang.language.dtypes import _is_any_dtype
@@ -20,6 +23,44 @@ def _buffer_data(value):
 
 def _normalize_primexpr_args(args):
     return tuple(_buffer_data(arg) for arg in args)
+
+
+def extract_lane(vector: PrimExpr, lane: int | IntImm, span: Span | None = None) -> PrimExpr:
+    """Extract one scalar lane from a fixed-width vector expression.
+
+    Parameters
+    ----------
+    vector : PrimExpr
+        The vector expression to extract from.
+
+    lane : int or IntImm
+        The zero-based lane index. The index must be known at compile time.
+
+    span : Optional[Span]
+        The location of this expression in the source code.
+
+    Returns
+    -------
+    result : PrimExpr
+        A scalar expression with the vector's element dtype.
+    """
+    if not isinstance(vector, PrimExpr):
+        raise TypeError(f"extract_lane expects a PrimExpr, but got {type(vector).__name__}")
+
+    lanes = vector.dtype.lanes
+    if lanes <= 1:
+        raise ValueError(f"extract_lane expects a vector expression, but got dtype {vector.dtype}")
+
+    if isinstance(lane, IntImm):
+        lane = lane.value
+    elif not isinstance(lane, Integral):
+        raise TypeError(f"extract_lane expects a compile-time integer lane, but got {type(lane).__name__}")
+
+    lane = int(lane)
+    if lane < 0 or lane >= lanes:
+        raise IndexError(f"Lane index {lane} is out of bounds for dtype {vector.dtype} with {lanes} lanes")
+
+    return Shuffle([vector], [lane], span)
 
 
 def call_packed(*args, span=None):
@@ -1117,6 +1158,61 @@ def ptx_mma_sp(
         meta_index,
         sparse_selector,
         saturate,
+    )
+
+
+def ptx_mma_block_scale(
+    accum_dtype,
+    shape,
+    A_layout,
+    B_layout,
+    kind,
+    scale_vec_size,
+    A_dtype,
+    B_dtype,
+    scale_type,
+    multiplicand_a,
+    a_index,
+    multiplicand_b,
+    b_index,
+    accumulator,
+    c_index,
+    scale_a,
+    scale_b,
+    scale_a_byte_id=0,
+    scale_a_thread_id=0,
+    scale_b_byte_id=0,
+    scale_b_thread_id=0,
+):
+    """TVM intrinsic for SM120a warp-level NVF4 block-scaled MMA."""
+
+    def _selector_value(value):
+        return IntImm("int32", value) if isinstance(value, int) else value
+
+    return call_intrin(
+        accum_dtype,
+        _tvm_op.Op.get("tl.ptx_mma_block_scale"),
+        tvm.tirx.StringImm(str(accum_dtype)),
+        tvm.tirx.StringImm(str(shape)),
+        tvm.tirx.StringImm(str(A_layout)),
+        tvm.tirx.StringImm(str(B_layout)),
+        tvm.tirx.StringImm(str(kind)),
+        IntImm("int32", scale_vec_size),
+        tvm.tirx.StringImm(str(A_dtype)),
+        tvm.tirx.StringImm(str(B_dtype)),
+        tvm.tirx.StringImm(str(scale_type)),
+        multiplicand_a,
+        a_index,
+        multiplicand_b,
+        b_index,
+        accumulator,
+        c_index,
+        scale_a,
+        scale_b,
+        _selector_value(scale_a_byte_id),
+        _selector_value(scale_a_thread_id),
+        _selector_value(scale_b_byte_id),
+        _selector_value(scale_b_thread_id),
     )
 
 
@@ -3186,7 +3282,13 @@ def power(x, y, span=None):
         The result.
     """
     if isinstance(y, (int, IntImm)):
-        return pow_of_int(x, y)
+        # pow_of_int's `for (i = 1; i < y; ...)` loop only computes x**y for y >= 1.
+        yv = int(y)
+        if yv == 0:
+            return const(1, dtype=x.dtype)
+        if yv >= 1:
+            return pow_of_int(x, yv)
+        return _tvm_op.power(x, yv, span)
     return _tvm_op.power(x, y, span)
 
 
@@ -3210,7 +3312,13 @@ def pow(x, y, span=None):
         The result.
     """
     if isinstance(y, (int, IntImm)):
-        return pow_of_int(x, y)
+        # pow_of_int's `for (i = 1; i < y; ...)` loop only computes x**y for y >= 1.
+        yv = int(y)
+        if yv == 0:
+            return const(1, dtype=x.dtype)
+        if yv >= 1:
+            return pow_of_int(x, yv)
+        return _tvm_op.pow(x, yv, span)
     return _tvm_op.pow(x, y, span)
 
 

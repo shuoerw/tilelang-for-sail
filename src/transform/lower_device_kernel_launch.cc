@@ -31,6 +31,7 @@
 #include <tvm/tirx/stmt_functor.h>
 #include <tvm/tirx/transform.h>
 
+#include "common/storage_size.h"
 #include "runtime/thread_storage_scope.h"
 #include "tir/transforms/ir_utils.h"
 
@@ -163,21 +164,20 @@ private:
   }
 
   void VisitStmt_(const AllocBufferNode *op) final {
-    auto storage_scope =
-        runtime::StorageScope::Create(GetPtrStorageScope(op->buffer->data));
+    auto scope = GetPtrStorageScope(op->buffer->data);
+    if (scope == "metal.cooperative_tensor") {
+      StmtVisitor::VisitStmt_(op);
+      return;
+    }
+
+    auto storage_scope = runtime::StorageScope::Create(scope);
     if (storage_scope.rank == runtime::StorageRank::kShared &&
         storage_scope.tag == ".dyn") {
       ICHECK(!dyn_shmem_size.defined())
           << "Only one dynamic shared memory allocation is allowed.";
       ICHECK_GT(op->buffer->shape.size(), 0);
 
-      PrimExpr dyn_size = Integer(1);
-      for (const auto &extent : op->buffer->shape) {
-        dyn_size *= extent;
-      }
-      dyn_size *= op->buffer->dtype.bytes() * op->buffer->dtype.lanes();
-
-      dyn_shmem_size = dyn_size;
+      dyn_shmem_size = GetBufferStorageSizeBytes(op->buffer);
     }
     StmtVisitor::VisitStmt_(op);
   }
@@ -334,7 +334,7 @@ private:
       // launch, but need to be replaced with call_extern.
       extern_function_call_.insert(gvar);
       Array<PrimExpr> args;
-      args.push_back(StringImm(gvar->name_hint));
+      args.push_back(StringImm(dev_info.global_symbol));
       for (const auto &arg : node->args) {
         args.push_back(arg);
       }
