@@ -199,7 +199,8 @@ def compile_ppu(
         tmp_src.close()
         hgbin_path = tmp_src.name.replace(".hg", ".hgbin")
 
-        cmd = [hgcc, "-x", "hg", "-hgbin", "-O3", "-lineinfo", "-arch=" + ppu_arch] + cmd_options + ["-o", hgbin_path, tmp_src.name]
+        # HGCC's -O controls host optimization; --dopt controls device optimization.
+        cmd = [hgcc, "-x", "hg", "-hgbin", "-O3", "--dopt=3", "-lineinfo", "-arch=" + ppu_arch] + cmd_options + ["-o", hgbin_path, tmp_src.name]
 
         if verbose:
             print("PPU compile command:", " ".join(cmd))
