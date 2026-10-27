@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-#include "op/builtin.h"
+#include "ppu/op/builtin.h"
 
 namespace tvm {
 namespace tl {

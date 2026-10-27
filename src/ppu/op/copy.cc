@@ -12,7 +12,7 @@
 #include "backend/common/target_utils.h"
 #include "cuda/transform/ptx_async_copy_injector.h"
 #include "layout/layout.h"
-#include "op/builtin.h"
+#include "ppu/op/builtin.h"
 #include "op/utils.h"
 #include "ppu/layout/ppu_gemm_layouts.h"
 #include "ppu/op/copy.h"
@@ -529,8 +529,7 @@ Stmt Copy::LowerCPAsync(const CopyNode &op, const LowerArgs &lower_args,
   Stmt lowered_loop = LowerParallelLoop(
       par_op->GetRoot(), loop_layout, lower_args.thread_index, analyzer,
       lower_args.layout_map, par_op->GetPredicate(lower_args.thread_index),
-      /*parallel_loop=*/true, /*should_vectorize=*/true,
-      par_op->LoopLayoutRequiresPaddingGuard());
+      /*parallel_loop=*/true, par_op->LoopLayoutRequiresPaddingGuard());
 
   auto inject_result =
       InjectPTXAsyncCopy(lowered_loop,

@@ -40,6 +40,7 @@ list(APPEND TILE_LANG_SRCS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/runtime/runtime.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/op/atomic_add.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/op/atomic_reduce.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/op/builtin.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/op/copy.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/op/copy_analysis.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/ppu/op/fill.cc"

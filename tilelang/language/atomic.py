@@ -6,6 +6,7 @@ import tilelang.language as T
 from tilelang._typing import BufferLikeType
 from tvm import DataType, ir
 from tvm.tirx import PrimExpr, Buffer, Var, op
+from tilelang.language.utils import _normalize_annotations
 from tilelang.utils.language import to_buffer_region, legalize_pairwise_extents
 from tilelang.language.utils import get_extent
 
@@ -18,11 +19,14 @@ _MEMORY_ORDER_ID_MAP = {
     "seq_cst": 5,
 }
 
+_ATOMIC_LOAD_MEMORY_ORDERS = frozenset({"relaxed", "consume", "acquire", "seq_cst"})
+_ATOMIC_STORE_MEMORY_ORDERS = frozenset({"relaxed", "release", "seq_cst"})
+
 _PPU_ATOMIC_DTYPES = frozenset(("int32", "uint32", "int64", "uint64", "float32", "float64"))
-_ATOMIC_MEMORY_ORDERS = {
+_PPU_ATOMIC_MEMORY_ORDERS = {
     "atomic_add": frozenset(_MEMORY_ORDER_ID_MAP),
-    "atomic_load": frozenset(("relaxed", "consume", "acquire", "seq_cst")),
-    "atomic_store": frozenset(("relaxed", "release", "seq_cst")),
+    "atomic_load": _ATOMIC_LOAD_MEMORY_ORDERS,
+    "atomic_store": _ATOMIC_STORE_MEMORY_ORDERS,
 }
 
 
@@ -33,13 +37,19 @@ def _vector_atomic_return_dtype(dst: BufferLikeType | Var, lanes: int) -> DataTy
     return buffer.dtype.with_lanes(lanes)
 
 
+def _get_memory_order_id(operation: str, memory_order: str, valid_orders: frozenset[str]) -> int:
+    if memory_order not in valid_orders:
+        raise ValueError(f"{operation} does not support memory_order={memory_order!r}; expected one of {sorted(valid_orders)}")
+    return _MEMORY_ORDER_ID_MAP[memory_order]
+
+
 def _validate_memory_scope(scope: str) -> None:
     scopes = ("block", "device", "system")
     if scope not in scopes:
         raise ValueError(f"Unsupported memory scope {scope!r}; expected one of: {', '.join(scopes)}")
 
 
-def _validate_atomic_type(operation: str, dtype: object, scope: str) -> None:
+def _validate_ppu_atomic_type(operation: str, dtype: object, scope: str) -> None:
     dtype_name = str(dtype)
     if dtype_name not in _PPU_ATOMIC_DTYPES:
         supported = ", ".join(sorted(_PPU_ATOMIC_DTYPES))
@@ -48,20 +58,23 @@ def _validate_atomic_type(operation: str, dtype: object, scope: str) -> None:
         )
 
 
-def _validate_atomic_order(operation: str, memory_order: str, scope: str) -> int:
-    supported_orders = _ATOMIC_MEMORY_ORDERS[operation]
+def _validate_ppu_atomic_order(operation: str, memory_order: str, scope: str) -> int:
+    supported_orders = _PPU_ATOMIC_MEMORY_ORDERS[operation]
     if not isinstance(memory_order, str) or memory_order not in supported_orders:
         supported = ", ".join(sorted(supported_orders))
-        qualifier = f"PPU {scope}-scope " if scope != "device" else ""
-        raise ValueError(f"{qualifier}{operation} does not support memory_order={memory_order!r}; expected one of: {supported}")
+        raise ValueError(
+            f"PPU {scope}-scope {operation} does not support memory_order={memory_order!r}; expected one of: {supported}"
+        )
     return _MEMORY_ORDER_ID_MAP[memory_order]
 
 
-def atomic_max(dst: Buffer, value: PrimExpr, memory_order: str | None = None, return_prev: bool = False) -> PrimExpr:
+def atomic_max(
+    dst: Buffer, value: PrimExpr, memory_order: str | None = None, return_prev: bool = False, annotations: dict | None = None
+) -> PrimExpr:
     """
     Perform an atomic maximum on the value stored at dst with an optional memory-order.
 
-    Supports scalar/addressed extern atomic max when neither argument exposes extents, or tile-region-based atomic max for Buffer/BufferRegion/BufferLoad inputs. If both arguments are plain Buffers their shapes must be structurally equal. If at least one side exposes extents, extents are aligned (missing dimensions are treated as size 1); an assertion is raised if extents cannot be deduced. The optional `memory_order` (one of "relaxed","consume","acquire","release","acq_rel","seq_cst") is used only for the direct extern `AtomicMax` path when no extents are available — otherwise the tile-region path ignores `memory_order`.
+    Supports scalar/addressed extern atomic max when neither argument exposes extents, or tile-region-based atomic max for Buffer/BufferRegion/BufferLoad inputs. If both arguments are plain Buffers their shapes must be structurally equal. If at least one side exposes extents, extents are aligned (missing dimensions are treated as size 1); an assertion is raised if extents cannot be deduced. The optional `memory_order` (one of "relaxed","consume","acquire","release","acq_rel","seq_cst") is honored on CUDA targets by both the direct extern `AtomicMax` path and the tile-region path. HIP and CuteDSL codegen currently ignore it.
 
     Parameters:
         dst (Buffer): Destination buffer/address to apply the atomic max.
@@ -99,6 +112,7 @@ def atomic_max(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
 
     src_extent = get_extent(value)
     dst_extent = get_extent(dst)
+    ann = _normalize_annotations(annotations)
 
     if dst_extent is None and src_extent is None:
         # Scalar path: use atomicmax_elem_op intrinsic
@@ -112,6 +126,7 @@ def atomic_max(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
             T.access_ptr(dst, "rw"),
             value,
             memory_order_id,
+            annotations=ann,
         )
 
     # When both arguments are Buffer, we can check whether they are structural equal.
@@ -133,18 +148,19 @@ def atomic_max(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
     if return_prev:
         raise NotImplementedError("return_prev is not supported for tile-region-based atomic operations")
 
-    ann = {}
     if memory_order is not None:
         ann["memory_order"] = _MEMORY_ORDER_ID_MAP[memory_order]
 
-    return T.call_intrin("handle", op.Op.get("tl.tileop.atomicmax"), value, dst, annotations=ann if ann else None)
+    return T.call_intrin("handle", op.Op.get("tl.tileop.atomicmax"), value, dst, annotations=ann)
 
 
-def atomic_min(dst: Buffer, value: PrimExpr, memory_order: str | None = None, return_prev: bool = False) -> PrimExpr:
+def atomic_min(
+    dst: Buffer, value: PrimExpr, memory_order: str | None = None, return_prev: bool = False, annotations: dict | None = None
+) -> PrimExpr:
     """
     Atomically update the value at dst to the minimum of its current value and value.
 
-    Supports scalar/addressed extern atomic min when neither argument exposes extents, or tile-region-based atomic min for Buffer/BufferRegion/BufferLoad inputs. If both arguments are plain Buffers their shapes must be structurally equal. If at least one side exposes extents, extents are aligned (missing dimensions are treated as size 1); an assertion is raised if extents cannot be deduced. The optional `memory_order` (one of "relaxed","consume","acquire","release","acq_rel","seq_cst") is used only for the direct extern `AtomicMin` path when no extents are available — otherwise the tile-region path ignores `memory_order`.
+    Supports scalar/addressed extern atomic min when neither argument exposes extents, or tile-region-based atomic min for Buffer/BufferRegion/BufferLoad inputs. If both arguments are plain Buffers their shapes must be structurally equal. If at least one side exposes extents, extents are aligned (missing dimensions are treated as size 1); an assertion is raised if extents cannot be deduced. The optional `memory_order` (one of "relaxed","consume","acquire","release","acq_rel","seq_cst") is honored on CUDA targets by both the direct extern `AtomicMin` path and the tile-region path. HIP and CuteDSL codegen currently ignore it.
 
     Parameters:
         dst (Buffer): Destination buffer/address to apply the atomic min.
@@ -182,6 +198,7 @@ def atomic_min(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
 
     src_extent = get_extent(value)
     dst_extent = get_extent(dst)
+    ann = _normalize_annotations(annotations)
 
     if dst_extent is None and src_extent is None:
         # Scalar path: use atomicmin_elem_op intrinsic
@@ -195,6 +212,7 @@ def atomic_min(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
             T.access_ptr(dst, "rw"),
             value,
             memory_order_id,
+            annotations=ann,
         )
 
     # When both arguments are Buffer, we can check whether they are structural equal.
@@ -216,11 +234,10 @@ def atomic_min(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
     if return_prev:
         raise NotImplementedError("return_prev is not supported for tile-region-based atomic operations")
 
-    ann = {}
     if memory_order is not None:
         ann["memory_order"] = _MEMORY_ORDER_ID_MAP[memory_order]
 
-    return T.call_intrin("handle", op.Op.get("tl.tileop.atomicmin"), value, dst, annotations=ann if ann else None)
+    return T.call_intrin("handle", op.Op.get("tl.tileop.atomicmin"), value, dst, annotations=ann)
 
 
 def atomic_add(
@@ -229,12 +246,13 @@ def atomic_add(
     memory_order: str | None = None,
     return_prev: bool = False,
     use_tma: bool = False,
+    annotations: dict | None = None,
     scope: str = "device",
 ) -> PrimExpr:
     """
     Atomically add `value` into `dst`, returning a handle to the operation.
 
-    Supports scalar/addressed extern atomic add when neither argument exposes extents, or tile-region-based atomic add for Buffer/BufferRegion/BufferLoad inputs. If both arguments are plain Buffers their shapes must be structurally equal. If at least one side exposes extents, extents are aligned (missing dimensions are treated as size 1); an assertion is raised if extents cannot be deduced. The optional `memory_order` (one of "relaxed","consume","acquire","release","acq_rel","seq_cst") is used only for the direct extern `AtomicAdd` path when no extents are available — otherwise the tile-region path ignores `memory_order`.
+    Supports scalar/addressed extern atomic add when neither argument exposes extents, or tile-region-based atomic add for Buffer/BufferRegion/BufferLoad inputs. If both arguments are plain Buffers their shapes must be structurally equal. If at least one side exposes extents, extents are aligned (missing dimensions are treated as size 1); an assertion is raised if extents cannot be deduced. The optional `memory_order` (one of "relaxed","consume","acquire","release","acq_rel","seq_cst") is honored on CUDA targets by both paths: the direct extern `AtomicAdd` path when no extents are available, and the tile-region path (including when it auto-vectorizes to `AtomicAddx2`/`AtomicAddx4`). HIP and CuteDSL codegen currently ignore it.
 
     Parameters:
         dst (Buffer): Destination buffer/address to apply the atomic add.
@@ -284,14 +302,18 @@ def atomic_add(
 
     src_extent = get_extent(value)
     dst_extent = get_extent(dst)
+    ann = _normalize_annotations(annotations)
+
     _validate_memory_scope(scope)
     if scope in ("block", "system"):
         if src_extent is not None or dst_extent is not None:
             raise NotImplementedError(f"PPU {scope} scope is supported only for scalar atomic_add")
         if use_tma:
             raise NotImplementedError(f"PPU {scope}-scope atomic_add does not support use_tma=True")
-        _validate_atomic_type("atomic_add", dst.dtype, scope)
-        memory_order_id = _validate_atomic_order("atomic_add", "relaxed" if memory_order is None else memory_order, scope)
+        _validate_ppu_atomic_type("atomic_add", dst.dtype, scope)
+        memory_order_id = _validate_ppu_atomic_order(
+            "atomic_add", "relaxed" if memory_order is None else memory_order, scope
+        )
         return T.call_intrin(
             dst.dtype if return_prev else "handle",
             op.Op.get("tl.atomic_add_ret_elem_op") if return_prev else op.Op.get("tl.atomic_add_elem_op"),
@@ -299,6 +321,7 @@ def atomic_add(
             value,
             memory_order_id,
             scope,
+            annotations=ann,
         )
 
     # Thread-level atomic add, where both extent can't be inferred
@@ -308,7 +331,7 @@ def atomic_add(
 
         # Pass destination by pointer to match device signature
         if memory_order is None:
-            return T.call_intrin(return_type, atomic_add_op, T.access_ptr(dst, "rw"), value)
+            return T.call_intrin(return_type, atomic_add_op, T.access_ptr(dst, "rw"), value, annotations=ann)
         else:
             return T.call_intrin(
                 return_type,
@@ -316,6 +339,7 @@ def atomic_add(
                 T.access_ptr(dst, "rw"),
                 value,
                 _MEMORY_ORDER_ID_MAP[memory_order],
+                annotations=ann,
             )
 
     # When both arguments are Buffer, we can check whether they are structural equal.
@@ -340,13 +364,12 @@ def atomic_add(
         raise NotImplementedError("return_prev is not supported for tile-region-based atomic operations")
 
     # Build annotations dict
-    ann = {}
     if use_tma:
         ann["use_tma"] = 1
     if memory_order is not None:
         ann["memory_order"] = _MEMORY_ORDER_ID_MAP[memory_order]
 
-    return T.call_intrin("handle", op.Op.get("tl.tileop.atomicadd"), value, dst, annotations=ann if ann else None)
+    return T.call_intrin("handle", op.Op.get("tl.tileop.atomicadd"), value, dst, annotations=ann)
 
 
 def atomic_addx2(dst: BufferLikeType, value: BufferLikeType, return_prev: bool = False) -> PrimExpr:
@@ -471,15 +494,23 @@ def atomic_load(
         >>> current_count = atomic_load(counter, memory_order="relaxed")
     """
     _validate_memory_scope(scope)
+    if scope == "device":
+        return T.call_intrin(
+            src.dtype,
+            op.Op.get("tl.atomic_load_elem_op"),
+            T.access_ptr(src, "r"),
+            _get_memory_order_id("atomic_load", memory_order, _ATOMIC_LOAD_MEMORY_ORDERS),
+        )
+
     if scope == "system":
-        _validate_atomic_type("atomic_load", src.dtype, scope)
-    memory_order_id = _validate_atomic_order("atomic_load", memory_order, scope)
+        _validate_ppu_atomic_type("atomic_load", src.dtype, scope)
+    memory_order_id = _validate_ppu_atomic_order("atomic_load", memory_order, scope)
     return T.call_intrin(
         src.dtype,
         op.Op.get("tl.atomic_load_elem_op"),
         T.access_ptr(src, "r"),
         memory_order_id,
-        *([scope] if scope != "device" else []),
+        scope,
     )
 
 
@@ -542,16 +573,25 @@ def atomic_store(
         >>> atomic_store(log_counter, 0)  # Reset counter atomically
     """
     _validate_memory_scope(scope)
+    if scope == "device":
+        return T.call_intrin(
+            "handle",
+            op.Op.get("tl.atomic_store_elem_op"),
+            T.access_ptr(dst, "w"),
+            src,
+            _get_memory_order_id("atomic_store", memory_order, _ATOMIC_STORE_MEMORY_ORDERS),
+        )
+
     if scope == "system":
-        _validate_atomic_type("atomic_store", dst.dtype, scope)
-    memory_order_id = _validate_atomic_order("atomic_store", memory_order, scope)
+        _validate_ppu_atomic_type("atomic_store", dst.dtype, scope)
+    memory_order_id = _validate_ppu_atomic_order("atomic_store", memory_order, scope)
     return T.call_intrin(
         "handle",
         op.Op.get("tl.atomic_store_elem_op"),
         T.access_ptr(dst, "w"),
         src,
         memory_order_id,
-        *([scope] if scope != "device" else []),
+        scope,
     )
 
 

@@ -14,7 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../../op/builtin.h"
+#include "ppu/op/builtin.h"
 #include "ppu/op/copy.h"
 
 namespace tvm {

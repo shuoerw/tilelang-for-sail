@@ -36,13 +36,11 @@
 #include "../../op/copy.h"
 #include "../../op/gemm.h"
 #include "../../op/parallel.h"
-#include "../../op/region.h"
 #include "../../op/utils.h"
 #include "../../transform/common/loop_fusion_utils.h"
 #include "../../transform/common/pipeline_utils.h"
 #include "../../transform/common/union_find.h"
-#include "../../transform/layout_reducer.h"
-#include "../../transform/parallel_loop_layout_validator.h"
+#include "../../transform/layout_inference/parallel_loop_layout_validator.h"
 #include "arith/ir_mutator_with_analyzer.h"
 #include "arith/ir_visitor_with_analyzer.h"
 #include "backend/common/target_utils.h"
@@ -614,7 +612,7 @@ private:
 
   Optional<Buffer> getBufferFromRegion(const PrimExpr &expr) {
     if (auto call = expr.as<CallNode>()) {
-      if (call->op.same_as(RegionOp::Get())) {
+      if (call->op.same_as(region())) {
         if (auto bl = call->args[0].as<BufferLoadNode>()) {
           return bl->buffer;
         }

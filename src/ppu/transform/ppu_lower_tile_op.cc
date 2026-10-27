@@ -18,7 +18,7 @@
 
 #include "../../layout/layout.h"
 #include "../../layout/utils.h"
-#include "../../op/builtin.h"
+#include "ppu/op/builtin.h"
 #include "../../op/gemm.h"
 #include "../../op/gemm_sp.h"
 #include "../../op/operator.h"
@@ -30,7 +30,6 @@
 
 #include "../../transform/common/mbarrier.h"
 #include "../../transform/common/pipeline_utils.h"
-#include "../../transform/layout_reducer.h"
 #include "../../transform/loop_partition.h"
 #include "arith/ir_mutator_with_analyzer.h"
 
@@ -1230,14 +1229,6 @@ private:
       pushed_loop_mbar_phase = true;
     }
 
-    // Extract reducer info from annotations
-    Map<Var, ReducerInfo> reducer_info;
-    if (op->annotations.count(attr::kReducerInfo)) {
-      reducer_info = op->annotations.Get(attr::kReducerInfo)
-                         ->as<Map<Var, ReducerInfo>>()
-                         .value();
-    }
-
     // First visit the body.
     For for_node = Downcast<For>(arith::IRMutatorWithAnalyzer::VisitStmt_(op));
     if (pushed_loop_mbar_phase) {
@@ -1390,69 +1381,11 @@ private:
     // iteration has to be owned by the corresponding thread.
     bool parallel_loop = has_non_local_store || has_fragment_access;
 
-    // Check if there are non-local buffer accesses (for vectorization decision)
-    bool has_non_local = false;
-    PostOrderVisit(for_node->body, [&](const ObjectRef &obj) {
-      if (const auto *load = obj.as<BufferLoadNode>()) {
-        if (!IsLocalBuffer(load->buffer, /*allow_var*/ true) &&
-            !IsFragmentBuffer(load->buffer)) {
-          has_non_local = true;
-        }
-      } else if (const auto *store = obj.as<BufferStoreNode>()) {
-        if (!IsLocalBuffer(store->buffer, /*allow_var*/ true) &&
-            !IsFragmentBuffer(store->buffer)) {
-          has_non_local = true;
-        }
-      }
-    });
-
-    // Check if reducers are present in the loop body
-    // Workaround: if reducer is presented, don't vectorize loop
-    // Best solution should be isolate reduction axis out of vectorization
-    //
-    // Note: reducer_info stores original buffer data vars, but after visiting
-    // the body, buffers may have been remapped via var_remap_. We need to find
-    // the original var to check against reducer_info.
-    bool has_reducer = false;
-    PostOrderVisit(for_node->body, [&](const ObjectRef &obj) {
-      if (!has_reducer) {
-        if (const auto *store = obj.as<BufferStoreNode>()) {
-          Var data_var = store->buffer->data;
-          // Find the original var if it was remapped
-          // var_remap_ maps old_var -> new_var, so we need reverse lookup
-          Var original_var = data_var;
-          for (const auto &[old_var, new_var] : var_remap_) {
-            if (new_var.same_as(data_var)) {
-              original_var = old_var;
-              break;
-            }
-          }
-          has_reducer = reducer_info.count(original_var) != 0;
-        }
-      }
-    });
-
-    // Check if vectorizable cast operations exist
-    bool has_cast_operations = false;
-    PostOrderVisit(for_node->body, [&](const ObjectRef &obj) {
-      if (const auto *cast = obj.as<CastNode>()) {
-        DataType from_ty = cast->value.dtype();
-        DataType target_ty = cast->dtype;
-        if (IsPpuVectorizableCast(from_ty, target_ty)) {
-          has_cast_operations = true;
-        }
-      }
-    });
-
-    // Decide whether to vectorize:
-    // - Only if there are non-local buffers or vectorizable casts
-    // - AND no reducers are present
-    bool should_vectorize =
-        (has_non_local || has_cast_operations) && !has_reducer;
-    // Lower the parallel loop using the common function
+    // Lower the parallel loop using the common function. Vectorization and
+    // reducer multiplicity are handled by the upstream loop/reducer planners.
     Stmt lowered = LowerParallelLoop(
         for_node, loop_layout, CurrentThreadIndex(), analyzer_, layout_map_,
-        predicate, parallel_loop, should_vectorize, require_padding_guard);
+        predicate, parallel_loop, require_padding_guard);
 
     if (TargetHasAsyncCopy(target_)) {
       tvm::transform::PassContext ctx = tvm::transform::PassContext::Current();

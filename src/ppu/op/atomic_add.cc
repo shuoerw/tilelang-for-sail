@@ -235,7 +235,7 @@ struct AtomicAdd {
     return LowerParallelLoop(fused_loop, loop_layout, lower_args.thread_index,
                              analyzer, lower_args.layout_map,
                              par_op->GetPredicate(lower_args.thread_index),
-                             /*parallel_loop=*/true, /*should_vectorize=*/true,
+                             /*parallel_loop=*/true,
                              par_op->LoopLayoutRequiresPaddingGuard());
   }
 

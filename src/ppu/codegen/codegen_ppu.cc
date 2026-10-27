@@ -21,7 +21,7 @@
 #include <vector>
 
 #include "arith/pattern_match.h"
-#include "op/builtin.h"
+#include "ppu/op/builtin.h"
 #include "tix.h"
 #include "transform/common/attr.h"
 
