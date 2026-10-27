@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import tilelang.language as T
-from tvm import ir
-from tvm.tirx import PrimExpr, Buffer, op
+from tilelang._typing import BufferLikeType
+from tvm import DataType, ir
+from tvm.tirx import PrimExpr, Buffer, Var, op
 from tilelang.utils.language import to_buffer_region, legalize_pairwise_extents
 from tilelang.language.utils import get_extent
 
@@ -23,6 +24,13 @@ _ATOMIC_MEMORY_ORDERS = {
     "atomic_load": frozenset(("relaxed", "consume", "acquire", "seq_cst")),
     "atomic_store": frozenset(("relaxed", "release", "seq_cst")),
 }
+
+
+def _vector_atomic_return_dtype(dst: BufferLikeType | Var, lanes: int) -> DataType:
+    if isinstance(dst, Var) and T.has_let_value(dst):
+        dst = T.get_let_value(dst)
+    buffer = dst if isinstance(dst, Buffer) else dst.buffer
+    return buffer.dtype.with_lanes(lanes)
 
 
 def _validate_memory_scope(scope: str) -> None:
@@ -44,7 +52,8 @@ def _validate_atomic_order(operation: str, memory_order: str, scope: str) -> int
     supported_orders = _ATOMIC_MEMORY_ORDERS[operation]
     if not isinstance(memory_order, str) or memory_order not in supported_orders:
         supported = ", ".join(sorted(supported_orders))
-        raise ValueError(f"PPU {scope}-scope {operation} does not support memory_order={memory_order!r}; expected one of: {supported}")
+        qualifier = f"PPU {scope}-scope " if scope != "device" else ""
+        raise ValueError(f"{qualifier}{operation} does not support memory_order={memory_order!r}; expected one of: {supported}")
     return _MEMORY_ORDER_ID_MAP[memory_order]
 
 
@@ -94,11 +103,12 @@ def atomic_max(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
     if dst_extent is None and src_extent is None:
         # Scalar path: use atomicmax_elem_op intrinsic
         return_type = dst.dtype if return_prev else "handle"
+        atomic_max_op = op.Op.get("tl.atomic_max_ret_elem_op") if return_prev else op.Op.get("tl.atomic_max_elem_op")
         memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order] if memory_order else 0
 
         return T.call_intrin(
             return_type,
-            op.Op.get("tl.atomic_max_elem_op"),
+            atomic_max_op,
             T.access_ptr(dst, "rw"),
             value,
             memory_order_id,
@@ -176,11 +186,12 @@ def atomic_min(dst: Buffer, value: PrimExpr, memory_order: str | None = None, re
     if dst_extent is None and src_extent is None:
         # Scalar path: use atomicmin_elem_op intrinsic
         return_type = dst.dtype if return_prev else "handle"
+        atomic_min_op = op.Op.get("tl.atomic_min_ret_elem_op") if return_prev else op.Op.get("tl.atomic_min_elem_op")
         memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order] if memory_order else 0
 
         return T.call_intrin(
             return_type,
-            op.Op.get("tl.atomic_min_elem_op"),
+            atomic_min_op,
             T.access_ptr(dst, "rw"),
             value,
             memory_order_id,
@@ -338,12 +349,12 @@ def atomic_add(
     return T.call_intrin("handle", op.Op.get("tl.tileop.atomicadd"), value, dst, annotations=ann if ann else None)
 
 
-def atomic_addx2(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> PrimExpr:
+def atomic_addx2(dst: BufferLikeType, value: BufferLikeType, return_prev: bool = False) -> PrimExpr:
     """Perform an atomic addition operation with double-width operands.
 
     Args:
-        dst (Buffer): Destination buffer where the atomic addition will be performed
-        value (PrimExpr): Value to be atomically added (double-width)
+        dst (BufferLikeType): Destination buffer where the atomic addition will be performed
+        value (BufferLikeType): Value to be atomically added (double-width)
         return_prev (bool): If True, return the previous value; if False, return handle (default False)
 
     Returns:
@@ -371,17 +382,17 @@ def atomic_addx2(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> Pri
         >>>         for j in range(0, grads.shape[1], 2):  # Process in pairs
         >>>             atomic_addx2(global_grads[i, j:j+2], grads[i, j:j+2])
     """
-    atomic_addx2_op = op.Op.get("tl.atomic_addx2_elem_op") if return_prev else op.Op.get("tl.atomic_addx2_elem_op")
-    return_type = dst.dtype if return_prev else "handle"
+    atomic_addx2_op = op.Op.get("tl.atomic_addx2_ret_elem_op") if return_prev else op.Op.get("tl.atomic_addx2_elem_op")
+    return_type = _vector_atomic_return_dtype(dst, 2) if return_prev else "handle"
     return T.call_intrin(return_type, atomic_addx2_op, T.access_ptr(dst, "rw"), T.access_ptr(value, "r"))
 
 
-def atomic_addx4(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> PrimExpr:
+def atomic_addx4(dst: BufferLikeType, value: BufferLikeType, return_prev: bool = False) -> PrimExpr:
     """Perform an atomic addition operation with quad-width operands.
 
     Args:
-        dst (Buffer): Destination buffer where the atomic addition will be performed
-        value (PrimExpr): Value to be atomically added (quad-width)
+        dst (BufferLikeType): Destination buffer where the atomic addition will be performed
+        value (BufferLikeType): Value to be atomically added (quad-width)
         return_prev (bool): If True, return the previous value; if False, return handle (default False)
 
     Returns:
@@ -409,8 +420,8 @@ def atomic_addx4(dst: Buffer, value: PrimExpr, return_prev: bool = False) -> Pri
         >>> rgba_add = T.Tensor([4], "float32", name="rgba_add")
         >>> atomic_addx4(rgba_dst, rgba_add)  # Atomic blend of all 4 channels
     """
-    atomic_addx4_op = op.Op.get("tl.atomic_addx4_elem_op") if return_prev else op.Op.get("tl.atomic_addx4_elem_op")
-    return_type = "float4" if "float" in str(dst.dtype).lower() else "handle"
+    atomic_addx4_op = op.Op.get("tl.atomic_addx4_ret_elem_op") if return_prev else op.Op.get("tl.atomic_addx4_elem_op")
+    return_type = _vector_atomic_return_dtype(dst, 4) if return_prev else "handle"
     return T.call_intrin(return_type, atomic_addx4_op, T.access_ptr(dst, "rw"), T.access_ptr(value, "r"))
 
 
@@ -424,14 +435,13 @@ def atomic_load(
 
     Performs an atomic load from `src` and returns a PrimExpr representing the loaded value.
     memory_order selects the ordering and must be one of: "relaxed", "consume", "acquire",
-    "release", "acq_rel", or "seq_cst" (default).
-    Raises KeyError if an unknown memory_order is provided.
-    For block and system scopes, only "relaxed", "consume", "acquire", and "seq_cst" are supported.
+    or "seq_cst" (default).
     scope may be "device" (default), "block", or "system";
     block and system scope currently require the PPU backend.
     System scope supports 32/64-bit integer and floating-point types.
-    Block and system scopes raise ValueError instead for invalid memory orders;
-    an unknown scope also raises ValueError.
+
+    Raises:
+        ValueError: If memory_order is not valid for an atomic load, or if scope is unknown.
 
     Note: atomic_load always returns the loaded value, so no return_prev parameter is needed.
 
@@ -461,12 +471,9 @@ def atomic_load(
         >>> current_count = atomic_load(counter, memory_order="relaxed")
     """
     _validate_memory_scope(scope)
-    if scope in ("block", "system"):
-        if scope == "system":
-            _validate_atomic_type("atomic_load", src.dtype, scope)
-        memory_order_id = _validate_atomic_order("atomic_load", memory_order, scope)
-    else:
-        memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order]
+    if scope == "system":
+        _validate_atomic_type("atomic_load", src.dtype, scope)
+    memory_order_id = _validate_atomic_order("atomic_load", memory_order, scope)
     return T.call_intrin(
         src.dtype,
         op.Op.get("tl.atomic_load_elem_op"),
@@ -488,10 +495,9 @@ def atomic_store(
     Parameters:
         dst (Buffer): Destination buffer to store into.
         src (PrimExpr): Value to store.
-        memory_order (str, optional): Memory ordering name; one of "relaxed", "consume",
-            "acquire", "release", "acq_rel", or "seq_cst". Defaults to "seq_cst".
+        memory_order (str, optional): Memory ordering name; one of "relaxed", "release",
+            or "seq_cst". Defaults to "seq_cst".
             The name is mapped to an internal numeric ID used by the underlying runtime.
-            For block and system scopes, only "relaxed", "release", and "seq_cst" are supported.
         scope (str): Memory visibility scope: ``"device"`` (default), ``"block"``, or ``"system"``.
             Block and system scope currently require the PPU backend.
             System scope supports 32/64-bit integer and floating-point types.
@@ -500,8 +506,7 @@ def atomic_store(
         PrimExpr: A handle representing the issued atomic store operation.
 
     Raises:
-        KeyError: If `memory_order` is not one of the supported names.
-        ValueError: Raised instead for invalid block/system-scope memory orders, or if scope is unknown.
+        ValueError: If memory_order is not valid for an atomic store, or if scope is unknown.
 
     Note: atomic_store doesn't return a previous value, so no return_prev parameter is needed.
 
@@ -537,12 +542,9 @@ def atomic_store(
         >>> atomic_store(log_counter, 0)  # Reset counter atomically
     """
     _validate_memory_scope(scope)
-    if scope in ("block", "system"):
-        if scope == "system":
-            _validate_atomic_type("atomic_store", dst.dtype, scope)
-        memory_order_id = _validate_atomic_order("atomic_store", memory_order, scope)
-    else:
-        memory_order_id = _MEMORY_ORDER_ID_MAP[memory_order]
+    if scope == "system":
+        _validate_atomic_type("atomic_store", dst.dtype, scope)
+    memory_order_id = _validate_atomic_order("atomic_store", memory_order, scope)
     return T.call_intrin(
         "handle",
         op.Op.get("tl.atomic_store_elem_op"),

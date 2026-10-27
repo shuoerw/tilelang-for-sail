@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 from tvm import DataType
-import tilelang.language as T
+import tilelang.ppu.language as T
 
 
 def ldmatrix_32x4_to_shared_16x8_layout_a(thread_id, local_id):

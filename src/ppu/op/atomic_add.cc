@@ -225,19 +225,16 @@ struct AtomicAdd {
     std::vector<InferLevel> levels = {InferLevel::kCommon, InferLevel::kStrict,
                                       InferLevel::kFree};
     for (auto level : levels) {
-      par_op->InferLayout({lower_args.target,
-                           lower_args.thread_bounds,
-                           lower_args.layout_map,
-                           analyzer,
-                           false,
-                           lower_args.buffer_remap,
-                           {}},
+      par_op->InferLayout({lower_args.target, lower_args.thread_bounds,
+                           lower_args.layout_map, analyzer,
+                           lower_args.buffer_remap, lower_args.bind_var_to_expr,
+                           false},
                           level);
     }
     auto loop_layout = par_op->GetLoopLayout();
-    return LowerParallelLoop(fused_loop, loop_layout, lower_args.thread_var,
+    return LowerParallelLoop(fused_loop, loop_layout, lower_args.thread_index,
                              analyzer, lower_args.layout_map,
-                             par_op->GetPredicate(lower_args.thread_var),
+                             par_op->GetPredicate(lower_args.thread_index),
                              /*parallel_loop=*/true, /*should_vectorize=*/true,
                              par_op->LoopLayoutRequiresPaddingGuard());
   }

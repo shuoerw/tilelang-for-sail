@@ -121,6 +121,16 @@ ComputeDefaultWarpPartition(const GemmWarpPolicyNode &policy, int M, int N,
   ICHECK(m_warp * n_warp <= num_warps)
       << "m_warp * n_warp must be less than num_warps, m_warp: " << m_warp
       << ", n_warp: " << n_warp << ", num_warps: " << num_warps;
+  ICHECK(M % (m_warp * kMPerWarp) == 0 && N % (n_warp * k_n_per_warp) == 0)
+      << "PPU T.gemm warp partition would truncate output tile: M=" << M
+      << ", N=" << N << ", m_warp=" << m_warp << ", n_warp=" << n_warp
+      << ", num_warps=" << num_warps << ", policy="
+      << (policy.IsFullRow()   ? "FullRow"
+          : policy.IsFullCol() ? "FullCol"
+                               : "Square")
+      << ". M must be divisible by " << m_warp * kMPerWarp << " and N by "
+      << n_warp * k_n_per_warp
+      << "; adjust `threads`, the block tile shape, or the warp policy.";
   policy.m_warp = m_warp;
   policy.n_warp = n_warp;
   return {m_warp, n_warp};

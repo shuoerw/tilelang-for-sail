@@ -74,7 +74,8 @@ void RegisterGemmImpl(GemmImpl impl) {
  *   expected layout is:
  *     [Aptr, Bptr, Cptr, trans_A (Bool), trans_B (Bool),
  *      M (Int), N (Int), K (Int), policy (Int), clear_accum (Bool),
- *      stride_A (Int), stride_B (Int), offset_A (Int), offset_B (Int),
+ *      stride_A (Int), stride_B (Int), offset_A (PrimExpr),
+ *      offset_B (PrimExpr),
  *      (optional) kPack (Int), (optional) internal wg_wait (Int),
  *      (optional) mbar (BufferLoad), cCoord_y (PrimExpr), cCoord_x (PrimExpr)]
  */
@@ -184,7 +185,7 @@ Stmt GemmNode::Lower(const LowerArgs &lower_args,
     // side.
     auto prim_func = Downcast<PrimFunc>(
         (*f)(GetRef<Gemm>(this), lower_args.layout_map, lower_args.target,
-             lower_args.thread_bounds, lower_args.thread_var, mbar_phase));
+             lower_args.thread_bounds, lower_args.thread_index, mbar_phase));
     ICHECK(prim_func->attrs.defined());
     auto global_symbol = prim_func->attrs.GetAttr<String>("global_symbol");
     ICHECK(global_symbol.has_value());

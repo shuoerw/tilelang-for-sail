@@ -1,7 +1,7 @@
 from tilelang import tvm as tvm
 from tvm import DataType
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.transform import PassConfigKey
 from tilelang.ppu.intrinsics import get_swizzle_layout
 from tilelang.ppu.intrinsics.macro.mma_macro_generator import (

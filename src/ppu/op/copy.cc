@@ -381,7 +381,7 @@ private:
 
   static CopyInst SelectInst(const CopyNode &op, Target target,
                              const LayoutMap &layout_map,
-                             arith::Analyzer *analyzer, bool buffer_oob);
+                             arith::Analyzer *analyzer);
 
   static void CheckParallelLoopLayout(const CopyNode &op, CopyInst copy_inst);
 
@@ -418,9 +418,8 @@ Layout Copy::ComputeLinearLayout(const Buffer &shared_tensor) {
 LayoutMap Copy::InferLayout(const CopyNode &op,
                             const LayoutInferArgs &layout_args,
                             InferLevel level) {
-  CopyInst copy_inst =
-      SelectInst(op, layout_args.target, layout_args.layout_map,
-                 layout_args.analyzer, layout_args.buffer_oob);
+  CopyInst copy_inst = SelectInst(op, layout_args.target,
+                                  layout_args.layout_map, layout_args.analyzer);
   CheckParallelLoopLayout(op, copy_inst);
 
   if (!op.par_op_.defined()) {
@@ -453,12 +452,11 @@ void Copy::CheckParallelLoopLayout(const CopyNode &op, CopyInst copy_inst) {
 
 CopyInst Copy::SelectInst(const CopyNode &op, Target target,
                           const LayoutMap &layout_map,
-                          arith::Analyzer *analyzer, bool buffer_oob) {
+                          arith::Analyzer *analyzer) {
   CopyAnalysisContext ctx;
   ctx.target = target;
   ctx.layout_map = &layout_map;
   ctx.analyzer = analyzer;
-  ctx.buffer_oob = buffer_oob;
   ctx.emit_diagnostics = true;
   auto result = SelectCopyInstForLowering(op, ctx);
   ICHECK(result.supported) << result.reason;
@@ -467,8 +465,8 @@ CopyInst Copy::SelectInst(const CopyNode &op, Target target,
 
 Stmt Copy::Lower(const CopyNode &op, const LowerArgs &lower_args,
                  arith::Analyzer *analyzer) {
-  auto copy_inst = SelectInst(op, lower_args.target, lower_args.layout_map,
-                              analyzer, /*buffer_oob=*/false);
+  auto copy_inst =
+      SelectInst(op, lower_args.target, lower_args.layout_map, analyzer);
   if (op.dst_block.defined()) {
     LOG(FATAL) << "T.copy with dst_block requires ppu0015+ cluster-copy/TMA, "
                << "but PPU only supports ppu0010/ppu0015. Got target="
@@ -522,19 +520,15 @@ Stmt Copy::LowerCPAsync(const CopyNode &op, const LowerArgs &lower_args,
   std::vector<InferLevel> levels = {InferLevel::kCommon, InferLevel::kStrict,
                                     InferLevel::kFree};
   for (auto level : levels) {
-    par_op->InferLayout({lower_args.target,
-                         lower_args.thread_bounds,
-                         lower_args.layout_map,
-                         analyzer,
-                         false,
-                         lower_args.buffer_remap,
-                         {}},
-                        level);
+    par_op->InferLayout(
+        {lower_args.target, lower_args.thread_bounds, lower_args.layout_map,
+         analyzer, lower_args.buffer_remap, lower_args.bind_var_to_expr, false},
+        level);
   }
   auto loop_layout = par_op->GetLoopLayout();
   Stmt lowered_loop = LowerParallelLoop(
-      par_op->GetRoot(), loop_layout, lower_args.thread_var, analyzer,
-      lower_args.layout_map, par_op->GetPredicate(lower_args.thread_var),
+      par_op->GetRoot(), loop_layout, lower_args.thread_index, analyzer,
+      lower_args.layout_map, par_op->GetPredicate(lower_args.thread_index),
       /*parallel_loop=*/true, /*should_vectorize=*/true,
       par_op->LoopLayoutRequiresPaddingGuard());
 
@@ -698,7 +692,7 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
       PrimExpr iterations = FloorDiv(extent, step);
       analyzer->Bind(local_iter, Range(0, iterations));
       PrimExpr thread_id =
-          lower_args.thread_var - lower_args.thread_bounds->min;
+          lower_args.thread_index - lower_args.thread_bounds->min;
       PrimExpr lane = FloorMod(thread_id, 32);
       PrimExpr load_thread =
           FloorDiv(thread_id, 32) * 32 + FloorDiv(FloorMod(lane, 16), 4);
@@ -984,7 +978,9 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
     // Warp-uniform base coordinates: leading dims (stage/panel) from the copy
     // range mins, spatial dims from the fragment inverse at (iter, warp).
     Var local_iter("i", extent.dtype());
-    PrimExpr warp = FloorDiv(lower_args.thread_var, 32) * 32;
+    PrimExpr norm_thread_index =
+        lower_args.thread_index - lower_args.thread_bounds->min;
+    PrimExpr warp = FloorDiv(norm_thread_index, 32) * 32;
     Array<PrimExpr> iter_shared_coords =
         inv->Forward({local_iter * step * num, warp});
     for (size_t i = 0; i < iter_shared_coords.size(); ++i)
@@ -1021,15 +1017,7 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
                        make_const(DataType::Int(32), trans_block)}));
     For for_node = For(local_iter, 0, FloorDiv(extent, step * num),
                        ForKind::kSerial, body);
-    for_node = PragmaUnrollLoop(for_node);
-    auto range = lower_args.thread_bounds;
-    if (range.defined()) {
-      auto thread_var = lower_args.thread_var;
-      auto thread_var_with_offset = thread_var - range->min;
-      for_node.CopyOnWrite()->body =
-          Substitute(for_node->body, {{thread_var, thread_var_with_offset}});
-    }
-    return for_node;
+    return PragmaUnrollLoop(for_node);
   };
   if (auto swzl_stmt = try_swzl_ldmatrix())
     return swzl_stmt.value();
@@ -1043,21 +1031,25 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
   Var local_iter("i", extent.dtype());
   Layout inv = local_layout->Inverse();
   Array<PrimExpr> shared_coords;
-  PrimExpr warp = FloorDiv(lower_args.thread_var, 32) * 32;
+  PrimExpr norm_thread_index = lower_args.thread_index;
+  if (lower_args.thread_bounds.defined()) {
+    norm_thread_index = norm_thread_index - lower_args.thread_bounds->min;
+  }
+  PrimExpr warp = FloorDiv(norm_thread_index, 32) * 32;
   if (!is_transposed) {
     auto local_index = analyzer->Simplify(
         local_iter * elems_per_reg * num +
-        elems_per_reg * FloorMod(FloorDiv(lower_args.thread_var, 8), num));
+        elems_per_reg * FloorMod(FloorDiv(norm_thread_index, 8), num));
     auto thread_index =
-        analyzer->Simplify(warp + FloorMod(lower_args.thread_var, 8) * 4);
+        analyzer->Simplify(warp + FloorMod(norm_thread_index, 8) * 4);
     shared_coords = inv->Forward({local_index, thread_index});
   } else {
     auto local_index = analyzer->Simplify(
         local_iter * elems_per_reg * num +
-        elems_per_reg * FloorMod(FloorDiv(lower_args.thread_var, 8), num) +
-        FloorMod(lower_args.thread_var, elems_per_reg));
+        elems_per_reg * FloorMod(FloorDiv(norm_thread_index, 8), num) +
+        FloorMod(norm_thread_index, elems_per_reg));
     auto thread_index = analyzer->Simplify(
-        warp + FloorDiv(FloorMod(lower_args.thread_var, 8), elems_per_reg));
+        warp + FloorDiv(FloorMod(norm_thread_index, 8), elems_per_reg));
     shared_coords = inv->Forward({local_index, thread_index});
   }
   shared_coords.pop_back();
@@ -1098,15 +1090,7 @@ Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
   auto body = Evaluate(Call(DataType::Handle(), copy_op, args));
   For for_node = For(local_iter, 0, FloorDiv(extent, elems_per_reg * num),
                      ForKind::kSerial, body);
-  for_node = PragmaUnrollLoop(for_node);
-  auto range = lower_args.thread_bounds;
-  if (range.defined()) {
-    auto thread_var = lower_args.thread_var;
-    auto thread_var_with_offset = thread_var - range->min;
-    for_node.CopyOnWrite()->body =
-        Substitute(for_node->body, {{thread_var, thread_var_with_offset}});
-  }
-  return for_node;
+  return PragmaUnrollLoop(for_node);
 }
 
 static void RequireAIUSmemAlignment(const LowerArgs &lower_args,
@@ -1411,7 +1395,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
 
   // Warp partitioning (unchanged).
   PrimExpr warp_id =
-      FloorDiv(lower_args.thread_var, IntImm(DataType::Int(32), 32));
+      FloorDiv(lower_args.thread_index, IntImm(DataType::Int(32), 32));
   PrimExpr warp_inner_idx =
       FloorMod(warp_id, IntImm(DataType::Int(32), inner_splits));
   PrimExpr warp_outer_idx =

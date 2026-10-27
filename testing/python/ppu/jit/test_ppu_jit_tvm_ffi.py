@@ -1,5 +1,5 @@
 from tilelang import tvm as tvm
-import tilelang.language as T
+import tilelang.ppu.language as T
 import tilelang.testing
 import tilelang
 import torch
@@ -308,6 +308,98 @@ def test_tvm_ffi_dynamic_shape():
     )
 
 
+@tilelang.jit(target="ppu", execution_backend="tvm_ffi")
+def runtime_contract_kernel():
+    rows = T.dynamic("rows")
+    cols = T.dynamic("cols")
+    row_stride = T.dynamic("row_stride")
+
+    @T.prim_func
+    def main(
+        A: T.StridedTensor((rows, cols), (row_stride, 1), T.float32),
+        B: T.Tensor((rows, cols), T.float32),
+        alpha: T.float32,
+    ):
+        with T.Kernel(T.ceildiv(rows * cols, 128), threads=128) as bx:
+            T.assume(cols % 4 == 0)
+            for i in T.Parallel(128):
+                idx = bx * 128 + i
+                if idx < rows * cols:
+                    B[idx // cols, idx % cols] = A[idx // cols, idx % cols] * alpha
+
+    return main
+
+
+@tilelang.testing.requires_ppu
+@pytest.mark.parametrize("multi_device", [False, True])
+def test_tvm_ffi_reuses_executable_with_dynamic_strides_scalars_and_streams(multi_device):
+    if multi_device and torch.cuda.device_count() < 2:
+        pytest.skip("Two PPU devices are required")
+    kernel = runtime_contract_kernel()
+    devices = [0, 1, 0] if multi_device else [0, 0, 0]
+    cases = [(4, 8, 1, 0.5), (7, 12, 2, -2.0), (3, 20, 3, 3.0)]
+    for device, (rows, cols, step, alpha) in zip(devices, cases):
+        with torch.cuda.device(device):
+            stream = torch.cuda.Stream(device=device)
+            with torch.cuda.stream(stream):
+                storage = torch.randn(rows * step + 1, cols + 3, device=f"cuda:{device}")
+                a = storage[1 : rows * step + 1 : step, 1 : cols + 1]
+                b = torch.full((rows, cols), float("nan"), device=f"cuda:{device}")
+                kernel(a, b, alpha)
+                expected = a * alpha
+            stream.synchronize()
+            torch.testing.assert_close(b, expected)
+
+
+@tilelang.testing.requires_ppu
+def test_tvm_ffi_reused_executable_checks_runtime_assumptions():
+    kernel = runtime_contract_kernel()
+    valid = torch.randn(4, 8, device="cuda")
+    kernel(valid, torch.empty_like(valid), 1.0)
+    invalid = torch.randn(4, 6, device="cuda")
+    with pytest.raises(RuntimeError, match="Assume: cols % 4 == 0"):
+        kernel(invalid, torch.empty_like(invalid), 1.0)
+    output = torch.empty_like(valid)
+    kernel(valid, output, 2.0)
+    torch.testing.assert_close(output, valid * 2.0)
+
+
+@tilelang.testing.requires_ppu
+@pytest.mark.parametrize("trans_b", [False, True])
+def test_tvm_ffi_batched_gemm_offsets_and_padded_shapes(trans_b):
+    batch, rows, cols, depth = 2, 35, 47, 37
+    b_shape = (batch, cols, depth) if trans_b else (batch, depth, cols)
+    b_shared_shape = (batch, 32, 32)
+
+    @T.prim_func
+    def main(
+        A: T.Tensor((batch, rows, depth), T.float16),
+        B: T.Tensor(b_shape, T.float16),
+        C: T.Tensor((batch, rows, cols), T.float32),
+    ):
+        with T.Kernel(T.ceildiv(cols, 32), T.ceildiv(rows, 32), threads=128) as (bx, by):
+            a_shared = T.alloc_shared((batch, 32, 32), T.float16)
+            b_shared = T.alloc_shared(b_shared_shape, T.float16)
+            c_fragment = T.alloc_fragment((32, 32), T.float32)
+            for b in T.serial(batch):
+                T.clear(c_fragment)
+                for k in T.serial(T.ceildiv(depth, 32)):
+                    T.copy(A[b, by * 32, k * 32], a_shared[b, :, :])
+                    if trans_b:
+                        T.copy(B[b, bx * 32, k * 32], b_shared[b, :, :])
+                    else:
+                        T.copy(B[b, k * 32, bx * 32], b_shared[b, :, :])
+                    T.gemm(a_shared[b, :, :], b_shared[b, :, :], c_fragment, transpose_B=trans_b)
+                T.copy(c_fragment, C[b, by * 32, bx * 32])
+
+    kernel = tilelang.compile(main, target="ppu", execution_backend="tvm_ffi", out_idx=[2])
+    for _ in range(2):
+        a = torch.randint(-2, 3, (batch, rows, depth), dtype=torch.float16, device="cuda")
+        b = torch.randint(-2, 3, b_shape, dtype=torch.float16, device="cuda")
+        expected = a.float() @ (b.transpose(-1, -2) if trans_b else b).float()
+        torch.testing.assert_close(kernel(a, b), expected)
+
+
 def check_hopper():
     if not torch.cuda.is_available():
         return False
@@ -388,7 +480,7 @@ def test_tvm_ffi_im2col_tma_desc():
 @tilelang.testing.requires_ppu_compute_version_eq(1, 0)
 def test_tvm_ffi_l2_persistent_map():
     """Test L2 persistent cache annotation with elementwise add."""
-    from tilelang.language import annotate_l2_hit_ratio
+    from tilelang.ppu.language import annotate_l2_hit_ratio
 
     M = 1024
     N = 1024

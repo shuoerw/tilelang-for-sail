@@ -1882,6 +1882,7 @@ call_llvm_pure_intrin = _dtype_forward(_tir_op.call_llvm_pure_intrin)
 call_pure_extern = _dtype_forward(_tir_op.call_pure_extern)
 ptx_mma = _dtype_forward(_tir_op.ptx_mma)
 ptx_mma_sp = _dtype_forward(_tir_op.ptx_mma_sp)
+ptx_mma_block_scale = _dtype_forward(_tir_op.ptx_mma_block_scale)
 ptx_wgmma_ss = _dtype_forward(_tir_op.ptx_wgmma_ss)
 ptx_wgmma_rs = _dtype_forward(_tir_op.ptx_wgmma_rs)
 ptx_wgmma_sp_ss = _dtype_forward(_tir_op.ptx_wgmma_sp_ss)
@@ -1901,9 +1902,6 @@ tvm_mfma = _dtype_forward(_tir_op.tvm_mfma)
 tvm_mfma_store = _dtype_forward(_tir_op.tvm_mfma_store)
 tvm_rdna_wmma = _dtype_forward(_tir_op.tvm_rdna_wmma)
 tvm_rdna_wmma_store = _dtype_forward(_tir_op.tvm_rdna_wmma_store)
-
-tix_ldmatrix_swzl = _dtype_forward(_tir_op.tix_ldmatrix_swzl)  # PPU: ld swizzle
-ppu_aiu_load = _tir_op.ppu_aiu_load
 
 broadcast = Broadcast
 ramp = Ramp
@@ -2140,6 +2138,7 @@ __all__ = [
     "tvm_warp_activemask",
     "ptx_mma",
     "ptx_mma_sp",
+    "ptx_mma_block_scale",
     "ptx_wgmma_ss",
     "ptx_wgmma_rs",
     "ptx_wgmma_sp_ss",
@@ -2166,8 +2165,6 @@ __all__ = [
     "tvm_mfma_store",
     "tvm_rdna_wmma",
     "tvm_rdna_wmma_store",
-    "tix_ldmatrix_swzl",  # PPU: ld swizzle
-    "ppu_aiu_load",
     "assume",
     "undef",
     "tvm_call_packed",

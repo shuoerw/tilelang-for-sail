@@ -10,7 +10,7 @@ import pytest
 from tilelang import tvm as tvm
 import tilelang
 import tilelang.testing
-import tilelang.language as T
+import tilelang.ppu.language as T
 
 
 def _is_fp8_dtype(dtype) -> bool:
@@ -1011,7 +1011,7 @@ def matmul_sr(
     A_shared_shape = (block_K, block_M) if trans_A else (block_M, block_K)
     B_shared_shape = (block_N, block_K) if trans_B else (block_K, block_N)
 
-    import tilelang.language as T
+    import tilelang.ppu.language as T
 
     @T.prim_func
     def main(
@@ -1882,7 +1882,7 @@ def matmul_rs(
     A_shared_shape = (block_K, block_M) if trans_A else (block_M, block_K)
     B_shared_shape = (block_N, block_K) if trans_B else (block_K, block_N)
 
-    import tilelang.language as T
+    import tilelang.ppu.language as T
 
     @T.prim_func
     def main(

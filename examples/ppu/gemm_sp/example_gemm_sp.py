@@ -1,9 +1,13 @@
 import argparse
+from pathlib import Path
+import sys
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 
-from tilelang.utils.sparse import compress, randn_semi_sparse, get_e_factor
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "gemm_sp"))
+
+from sparse_utils import compress, randn_semi_sparse, get_e_factor  # noqa: E402
 from tilelang.profiler import do_bench
 
 import torch

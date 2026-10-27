@@ -4,7 +4,7 @@ import re
 
 import pytest
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang import tvm
 from tilelang.ppu.pipeline import _AlignAIUSharedMemory
 

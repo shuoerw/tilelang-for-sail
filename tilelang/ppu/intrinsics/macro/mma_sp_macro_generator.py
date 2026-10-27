@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import tilelang.language as T
+import tilelang.ppu.language as T
 from typing import Literal
 from collections.abc import Callable
 from tvm import DataType, tirx
-from tvm.tirx import PrimExpr, IndexMap, Buffer, Var, BufferRegion, BufferLoad
+from tvm.tirx import PrimExpr, IndexMap, Buffer, BufferRegion, BufferLoad
 from tvm.ir import Range
 from tvm.runtime import convert
 from ..layout.utils import (
@@ -12,7 +12,7 @@ from ..layout.utils import (
     get_ldmatrix_offset,
 )
 from tilelang.utils import is_fragment, get_buffer_region_from_load
-from tilelang.utils.sparse import get_e_factor, get_e_replicate_factor
+from tilelang.cuda.intrinsics.sparse_layout import get_e_factor, get_e_replicate_factor
 
 from tilelang.cuda.intrinsics.layout.mma_sp_layout import (
     shared_16x16_to_mma_sp_layout_sr_a,
@@ -82,7 +82,7 @@ class SparseTensorCoreIntrinEmitter:
         reduce_k: int = 1,
         num_elems_per_byte: int = 1,
         is_m_first: bool = False,
-        thread_var: Var | None = None,
+        thread_index: PrimExpr | None = None,
     ):
         self.a_dtype = a_dtype
         self.e_dtype = e_dtype
@@ -108,7 +108,7 @@ class SparseTensorCoreIntrinEmitter:
         self.reduce_k = reduce_k
         self.threads = self.WARP_SIZE * (block_row_warps * block_col_warps) * reduce_k
         self.num_elems_per_byte = num_elems_per_byte
-        self.thread_var = thread_var
+        self.thread_index = thread_index
 
         if self.warp_rows == 0 or self.warp_cols == 0:
             raise ValueError(
@@ -178,13 +178,13 @@ class SparseTensorCoreIntrinEmitter:
         if is_m_first is not None:
             self.is_m_first = is_m_first
 
-    def get_thread_binding(self):
-        if self.thread_var is None:
+    def get_thread_binding(self) -> PrimExpr:
+        if self.thread_index is None:
             current_frame = T.KernelLaunchFrame.Current()
             assert current_frame is not None, "Must be called in a T.Kernel Frame"
             return current_frame.get_thread_binding()
         else:
-            return self.thread_var
+            return self.thread_index
 
     def get_store_index_map(self, inverse: bool = False) -> IndexMap:
         warp_size, local_size_c = self.WARP_SIZE, self.local_size_out

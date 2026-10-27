@@ -658,5 +658,251 @@
     "test_filter": "test_tilelang_language_tma_1d",
     "extra_args": [],
     "reason": "T.copy prefer_instruction=\"tma\" is not supported on PPU"
+  },
+  {
+    "file_path": "testing/python/issue/test_tilelang_issue_2529.py",
+    "test_filter": "test_tma_store_selection_uses_copy_bounds",
+    "extra_args": [],
+    "reason": "TMA lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_rs_fp16_bf16_codegen[bfloat16-__tl_cvt_f32x1_to_bf16x1_rs_sat]",
+    "extra_args": [],
+    "reason": "Stochastic rounding codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_rs_fp16_bf16_codegen[float16-__tl_cvt_f32x1_to_f16x1_rs_sat]",
+    "extra_args": [],
+    "reason": "Stochastic rounding codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_rs_fp16_bf16_packed_codegen[bfloat16-__tl_cvt_f32x2_to_bf16x2_rs_sat]",
+    "extra_args": [],
+    "reason": "Stochastic rounding codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_rs_fp16_bf16_packed_codegen[float16-__tl_cvt_f32x2_to_f16x2_rs_sat]",
+    "extra_args": [],
+    "reason": "Stochastic rounding codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_rs_fp16_bf16_per_element_rbits_codegen[bfloat16-__tl_cvt_f32x1_to_bf16x1_rs_sat]",
+    "extra_args": [],
+    "reason": "Stochastic rounding codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_rs_fp16_bf16_per_element_rbits_codegen[float16-__tl_cvt_f32x1_to_f16x1_rs_sat]",
+    "extra_args": [],
+    "reason": "Stochastic rounding codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_rs_fp16_bf16_rejects_sat_false[bfloat16]",
+    "extra_args": [],
+    "reason": "Stochastic rounding codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_cast_rounding.py",
+    "test_filter": "test_cast_rs_fp16_bf16_rejects_sat_false[float16]",
+    "extra_args": [],
+    "reason": "Stochastic rounding codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_accepts_supported_dtype[bfloat16]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_accepts_supported_dtype[float16]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_accepts_supported_dtype[float32]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_accepts_supported_dtype[int32]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_accepts_supported_dtype[uint32]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_rejects_unsupported_dtype[float32x2]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_rejects_unsupported_dtype[float64]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_rejects_unsupported_dtype[int16]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic.py",
+    "test_filter": "test_tma_atomic_add_rejects_unsupported_dtype[uint64]",
+    "extra_args": [],
+    "reason": "TMA atomic add lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_tma_copy.py",
+    "test_filter": "test_device_bound_descriptor_tma_is_rejected_when_ws_disabled",
+    "extra_args": [],
+    "reason": "TMA lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_tma_copy.py",
+    "test_filter": "test_device_bound_pointer_keeps_descriptorless_bulk1d",
+    "extra_args": [],
+    "reason": "TMA lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_cluster_rank_register_is_gated_by_cuda_architecture[sm_80]",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_cluster_rank_register_is_gated_by_cuda_architecture[sm_86]",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_cluster_rank_register_is_gated_by_cuda_architecture[sm_89]",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_event_metadata_is_preserved_in_tir_and_injected_source",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_float_payload_macro_uses_distinct_temporaries",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_independently_built_primfuncs_get_module_wide_event_ids",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_nested_session_keeps_outer_callback_active",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_prebuilt_payload_primfunc_enables_runtime_payloads_during_lowering",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_prebuilt_primfunc_keeps_metadata_when_session_resets_registry",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/tools/test_tilelang_tools_cuda_iket.py",
+    "test_filter": "test_session_restores_a_previous_callback",
+    "extra_args": [],
+    "reason": "IKET instrumentation codegen requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_lower_shared_tmem.py",
+    "test_filter": "test_untyped_buffer_reports_internal_error",
+    "extra_args": [],
+    "reason": "TMEM lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_producer_consumer_ws.py",
+    "test_filter": "test_tiled_ws_accepts_int64_pipeline_indices",
+    "extra_args": [],
+    "reason": "Warp specialization requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_producer_consumer_ws.py",
+    "test_filter": "test_tiled_ws_skips_device_bound_tma_descriptor_base",
+    "extra_args": [],
+    "reason": "Warp specialization requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_producer_consumer_ws_persistent.py",
+    "test_filter": "test_ws_pass_applies_under_persistent_dynamic_bound",
+    "extra_args": [],
+    "reason": "Warp specialization requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_producer_consumer_ws_persistent.py",
+    "test_filter": "test_ws_pass_applies_under_persistent_serial",
+    "extra_args": [],
+    "reason": "Warp specialization requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_producer_consumer_ws_persistent.py",
+    "test_filter": "test_ws_pass_applies_under_t_persistent_primitive",
+    "extra_args": [],
+    "reason": "Warp specialization requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_tmem_physical_shape.py",
+    "test_filter": "test_tmem_frg_type_c_allocates_int32_storage_columns[bfloat16]",
+    "extra_args": [],
+    "reason": "TMEM lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_tmem_physical_shape.py",
+    "test_filter": "test_tmem_frg_type_c_allocates_int32_storage_columns[float16]",
+    "extra_args": [],
+    "reason": "TMEM lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_tmem_physical_shape.py",
+    "test_filter": "test_tmem_frg_type_c_allocates_int32_storage_columns[float32]",
+    "extra_args": [],
+    "reason": "TMEM lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_tmem_physical_shape.py",
+    "test_filter": "test_tmem_outer_m_tiles_allocate_physical_columns[bfloat16-64]",
+    "extra_args": [],
+    "reason": "TMEM lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/transform/test_tilelang_transform_tmem_physical_shape.py",
+    "test_filter": "test_tmem_outer_m_tiles_allocate_physical_columns[float32-128]",
+    "extra_args": [],
+    "reason": "TMEM lowering requires the CUDA backend, which is not included in the PPU build."
   }
 ]

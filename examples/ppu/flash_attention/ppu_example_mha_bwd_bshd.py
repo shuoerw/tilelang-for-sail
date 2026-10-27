@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import tilelang
 from tilelang.autotuner import *
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.transform import PassConfigKey
 import argparse
 

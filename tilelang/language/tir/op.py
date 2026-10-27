@@ -1,11 +1,14 @@
 from __future__ import annotations
+
+from numbers import Integral
 from typing import Any
+
 import tvm
 from tvm.ir import PrimExpr
 from tvm.ir.base import Span
 from tvm.runtime import const
 from tvm.tirx import Buffer
-from tvm.tirx.expr import IntImm, PrimExprWithOp
+from tvm.tirx.expr import IntImm, PrimExprWithOp, Shuffle as Shuffle
 import tvm.tirx.op as _tvm_op
 
 from tilelang.language.dtypes import _is_any_dtype
@@ -20,6 +23,44 @@ def _buffer_data(value):
 
 def _normalize_primexpr_args(args):
     return tuple(_buffer_data(arg) for arg in args)
+
+
+def extract_lane(vector: PrimExpr, lane: int | IntImm, span: Span | None = None) -> PrimExpr:
+    """Extract one scalar lane from a fixed-width vector expression.
+
+    Parameters
+    ----------
+    vector : PrimExpr
+        The vector expression to extract from.
+
+    lane : int or IntImm
+        The zero-based lane index. The index must be known at compile time.
+
+    span : Optional[Span]
+        The location of this expression in the source code.
+
+    Returns
+    -------
+    result : PrimExpr
+        A scalar expression with the vector's element dtype.
+    """
+    if not isinstance(vector, PrimExpr):
+        raise TypeError(f"extract_lane expects a PrimExpr, but got {type(vector).__name__}")
+
+    lanes = vector.dtype.lanes
+    if lanes <= 1:
+        raise ValueError(f"extract_lane expects a vector expression, but got dtype {vector.dtype}")
+
+    if isinstance(lane, IntImm):
+        lane = lane.value
+    elif not isinstance(lane, Integral):
+        raise TypeError(f"extract_lane expects a compile-time integer lane, but got {type(lane).__name__}")
+
+    lane = int(lane)
+    if lane < 0 or lane >= lanes:
+        raise IndexError(f"Lane index {lane} is out of bounds for dtype {vector.dtype} with {lanes} lanes")
+
+    return Shuffle([vector], [lane], span)
 
 
 def call_packed(*args, span=None):
@@ -975,50 +1016,6 @@ def ptx_mma(
     )
 
 
-def ptx_mma_scaled(
-    dtype,
-    shape,
-    A_layout,
-    B_layout,
-    A_dtype,
-    B_dtype,
-    C_dtype,
-    multiplicand_a,
-    a_index,
-    multiplicand_b,
-    b_index,
-    accumulator,
-    c_index,
-    saturate,
-    scale_a,
-    scale_b,
-    scale_a_selector,
-    scale_b_selector,
-):
-    """PPU FP4 MMA intrinsic with four explicit runtime scale operands."""
-    return call_intrin(
-        dtype,
-        "tirx.ptx_mma",
-        shape,
-        A_layout,
-        B_layout,
-        A_dtype,
-        B_dtype,
-        C_dtype,
-        multiplicand_a,
-        a_index,
-        multiplicand_b,
-        b_index,
-        accumulator,
-        c_index,
-        saturate,
-        scale_a,
-        scale_b,
-        scale_a_selector,
-        scale_b_selector,
-    )
-
-
 def ptx_mma_sp(
     dtype,
     shape,
@@ -1117,6 +1114,61 @@ def ptx_mma_sp(
         meta_index,
         sparse_selector,
         saturate,
+    )
+
+
+def ptx_mma_block_scale(
+    accum_dtype,
+    shape,
+    A_layout,
+    B_layout,
+    kind,
+    scale_vec_size,
+    A_dtype,
+    B_dtype,
+    scale_type,
+    multiplicand_a,
+    a_index,
+    multiplicand_b,
+    b_index,
+    accumulator,
+    c_index,
+    scale_a,
+    scale_b,
+    scale_a_byte_id=0,
+    scale_a_thread_id=0,
+    scale_b_byte_id=0,
+    scale_b_thread_id=0,
+):
+    """TVM intrinsic for SM120a warp-level NVF4 block-scaled MMA."""
+
+    def _selector_value(value):
+        return IntImm("int32", value) if isinstance(value, int) else value
+
+    return call_intrin(
+        accum_dtype,
+        _tvm_op.Op.get("tl.ptx_mma_block_scale"),
+        tvm.tirx.StringImm(str(accum_dtype)),
+        tvm.tirx.StringImm(str(shape)),
+        tvm.tirx.StringImm(str(A_layout)),
+        tvm.tirx.StringImm(str(B_layout)),
+        tvm.tirx.StringImm(str(kind)),
+        IntImm("int32", scale_vec_size),
+        tvm.tirx.StringImm(str(A_dtype)),
+        tvm.tirx.StringImm(str(B_dtype)),
+        tvm.tirx.StringImm(str(scale_type)),
+        multiplicand_a,
+        a_index,
+        multiplicand_b,
+        b_index,
+        accumulator,
+        c_index,
+        scale_a,
+        scale_b,
+        _selector_value(scale_a_byte_id),
+        _selector_value(scale_a_thread_id),
+        _selector_value(scale_b_byte_id),
+        _selector_value(scale_b_thread_id),
     )
 
 
@@ -2022,88 +2074,6 @@ def ptx_wait_barrier(barrier_id):
         The call expression.
     """
     return _tvm_op.ptx_wait_barrier(barrier_id)
-
-
-def tix_ldmatrix_swzl(trans, num, src_access_ptr, dst_access_ptr, swzl_mode, trans_block=False):
-    """PPU ldmatrix intrinsic using swizzled bulk tensor load.
-
-    This follows the v0.1.11 access-pointer style used by ``ptx_ldmatrix`` and
-    adds the PPU1.5 swizzle mode and block-transpose flag.
-    """
-    return tvm.tirx.call_intrin(
-        "handle",
-        tvm.tirx.op.Op.get("tl.tix_ldmatrix_swzl"),
-        trans,
-        num,
-        src_access_ptr,
-        dst_access_ptr,
-        swzl_mode,
-        trans_block,
-    )
-
-
-def ppu_aiu_load(
-    smem_ptr,
-    gmem_ptr,
-    dim_c,
-    dim_w,
-    cube_c,
-    cube_w,
-    stride_w_bytes,
-    start_c,
-    start_w,
-    swzl_mode,
-    is_swizzle=1,
-):
-    """TIX AIU Load operation.
-
-    Issue a warp-level asynchronous load. The caller selects the issuing warp
-    and manages commit/wait operations. Out-of-bounds coordinates are zero-filled.
-    The shared destination must be 128-byte aligned. ``cube_c``, ``cube_w``,
-    ``swzl_mode``, and ``is_swizzle`` must be compile-time constants.
-
-    Parameters
-    ----------
-    smem_ptr : PrimExpr
-        Shared memory destination pointer.
-    gmem_ptr : PrimExpr
-        Global memory source pointer.
-    dim_c : int | PrimExpr
-        C dimension size (bytes).
-    dim_w : int | PrimExpr
-        W dimension size (rows).
-    cube_c : int
-        Copy block C size (bytes), at most 128. Swizzled loads require 64 or 128.
-    cube_w : int
-        Copy block W size (rows).
-    stride_w_bytes : int | PrimExpr
-        Row stride in bytes.
-    start_c : int | PrimExpr
-        Start coordinate on C axis (bytes).
-    start_w : int | PrimExpr
-        Start coordinate on W axis (rows).
-    swzl_mode : int
-        Swizzle mode (0=128B, 1=64B).
-    is_swizzle : bool | int
-        Use a swizzled destination (default 1); set to 0 for a linear destination.
-    """
-
-    return tvm.tirx.call_intrin(
-        "handle",
-        tvm.tirx.op.Op.get("tl.ppu_aiu_load"),
-        smem_ptr,
-        gmem_ptr,
-        dim_c,
-        dim_w,
-        cube_c,
-        cube_w,
-        stride_w_bytes,
-        start_c,
-        start_w,
-        swzl_mode,
-        is_swizzle,
-        annotations={"no_implicit_async_commit_wait": const(1, "int32")},
-    )
 
 
 def create_barriers(barrier_count):
@@ -3186,7 +3156,13 @@ def power(x, y, span=None):
         The result.
     """
     if isinstance(y, (int, IntImm)):
-        return pow_of_int(x, y)
+        # pow_of_int's `for (i = 1; i < y; ...)` loop only computes x**y for y >= 1.
+        yv = int(y)
+        if yv == 0:
+            return const(1, dtype=x.dtype)
+        if yv >= 1:
+            return pow_of_int(x, yv)
+        return _tvm_op.power(x, yv, span)
     return _tvm_op.power(x, y, span)
 
 
@@ -3210,7 +3186,13 @@ def pow(x, y, span=None):
         The result.
     """
     if isinstance(y, (int, IntImm)):
-        return pow_of_int(x, y)
+        # pow_of_int's `for (i = 1; i < y; ...)` loop only computes x**y for y >= 1.
+        yv = int(y)
+        if yv == 0:
+            return const(1, dtype=x.dtype)
+        if yv >= 1:
+            return pow_of_int(x, yv)
+        return _tvm_op.pow(x, yv, span)
     return _tvm_op.pow(x, y, span)
 
 

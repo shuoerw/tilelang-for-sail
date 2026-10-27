@@ -6,7 +6,7 @@ Uses PPU0015 mma.m16n16k64 with float4_e2m1fn operands and float32 accumulator.
 import torch
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.transform import PassConfigKey
 
 # e2m1 magnitude LUT; bit 3 = sign.

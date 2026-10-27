@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.env import ACTLIZE_INCLUDE_DIR
 from tilelang.transform import PassConfigKey
 

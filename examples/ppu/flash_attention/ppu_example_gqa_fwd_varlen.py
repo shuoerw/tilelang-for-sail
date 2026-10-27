@@ -2,7 +2,7 @@
 import argparse
 import torch
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.transform import PassConfigKey
 import tilelang.testing
 from tilelang.profiler import do_bench

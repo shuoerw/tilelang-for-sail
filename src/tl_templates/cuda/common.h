@@ -59,6 +59,18 @@ using int4_t = int4;
 #define TL_DEVICE_NOINLINE __noinline__ __device__
 #define TL_PATCH
 
+#if defined(__CUDA_ARCH_FEAT_SM100_ALL) ||                                     \
+    defined(__CUDA_ARCH_FEAT_SM101_ALL) ||                                     \
+    defined(__CUDA_ARCH_FEAT_SM103_ALL) ||                                     \
+    defined(__CUDA_ARCH_FEAT_SM110_ALL) ||                                     \
+    (defined(__CUDA_ARCH_FAMILY_SPECIFIC__) &&                                 \
+     ((__CUDA_ARCH_FAMILY_SPECIFIC__ == 1000) ||                               \
+      (__CUDA_ARCH_FAMILY_SPECIFIC__ == 1010) ||                               \
+      (__CUDA_ARCH_FAMILY_SPECIFIC__ == 1030) ||                               \
+      (__CUDA_ARCH_FAMILY_SPECIFIC__ == 1100)))
+#define TL_CUDA_ARCH_TCGEN05_ENABLED
+#endif
+
 #define TILELANG_CHECK(stmt)                                                   \
   do {                                                                         \
     cudaError_t __err = (stmt);                                                \
@@ -116,6 +128,89 @@ TL_PATCH TL_DEVICE half_t hrsqrt(const half_t x) {
 // hrsqrt function for bfloat16_t
 TL_PATCH TL_DEVICE bfloat16_t hrsqrt(const bfloat16_t x) {
   return bfloat16_t(hrsqrt(x.to_nv_bfloat16()));
+}
+
+// hsqrt function for half_t
+TL_PATCH TL_DEVICE half_t hsqrt(const half_t x) {
+  return half_t(hsqrt(x.to_half()));
+}
+
+// hsqrt function for bfloat16_t
+TL_PATCH TL_DEVICE bfloat16_t hsqrt(const bfloat16_t x) {
+  return bfloat16_t(hsqrt(x.to_nv_bfloat16()));
+}
+
+// hrcp function for half_t
+TL_PATCH TL_DEVICE half_t hrcp(const half_t x) {
+  return half_t(hrcp(x.to_half()));
+}
+
+// hrcp function for bfloat16_t
+TL_PATCH TL_DEVICE bfloat16_t hrcp(const bfloat16_t x) {
+  return bfloat16_t(hrcp(x.to_nv_bfloat16()));
+}
+
+// __hadd_rn function for half_t
+TL_PATCH TL_DEVICE half_t __hadd_rn(const half_t x, const half_t y) {
+  return half_t(__hadd_rn(x.to_half(), y.to_half()));
+}
+
+// __hadd_rn function for bfloat16_t
+TL_PATCH TL_DEVICE bfloat16_t __hadd_rn(const bfloat16_t x,
+                                        const bfloat16_t y) {
+  return bfloat16_t(__hadd_rn(x.to_nv_bfloat16(), y.to_nv_bfloat16()));
+}
+
+// __hsub_rn function for half_t
+TL_PATCH TL_DEVICE half_t __hsub_rn(const half_t x, const half_t y) {
+  return half_t(__hsub_rn(x.to_half(), y.to_half()));
+}
+
+// __hsub_rn function for bfloat16_t
+TL_PATCH TL_DEVICE bfloat16_t __hsub_rn(const bfloat16_t x,
+                                        const bfloat16_t y) {
+  return bfloat16_t(__hsub_rn(x.to_nv_bfloat16(), y.to_nv_bfloat16()));
+}
+
+// __hmul_rn function for half_t
+TL_PATCH TL_DEVICE half_t __hmul_rn(const half_t x, const half_t y) {
+  return half_t(__hmul_rn(x.to_half(), y.to_half()));
+}
+
+// __hmul_rn function for bfloat16_t
+TL_PATCH TL_DEVICE bfloat16_t __hmul_rn(const bfloat16_t x,
+                                        const bfloat16_t y) {
+  return bfloat16_t(__hmul_rn(x.to_nv_bfloat16(), y.to_nv_bfloat16()));
+}
+
+// __hdiv function for half_t
+TL_PATCH TL_DEVICE half_t __hdiv(const half_t x, const half_t y) {
+  return half_t(__hdiv(x.to_half(), y.to_half()));
+}
+
+// __hdiv function for bfloat16_t
+TL_PATCH TL_DEVICE bfloat16_t __hdiv(const bfloat16_t x, const bfloat16_t y) {
+  return bfloat16_t(__hdiv(x.to_nv_bfloat16(), y.to_nv_bfloat16()));
+}
+
+// __hfma function for half_t
+TL_PATCH TL_DEVICE half_t __hfma(const half_t x, const half_t y,
+                                 const half_t z) {
+  return half_t(__hfma(x.to_half(), y.to_half(), z.to_half()));
+}
+
+// __hfma function for bfloat16_t
+TL_PATCH TL_DEVICE bfloat16_t __hfma(const bfloat16_t x, const bfloat16_t y,
+                                     const bfloat16_t z) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800)
+  return bfloat16_t(
+      __hfma(x.to_nv_bfloat16(), y.to_nv_bfloat16(), z.to_nv_bfloat16()));
+#else
+  // CUDA declares the native __nv_bfloat16 __hfma overload only for SM80+.
+  // On earlier targets (e.g. SM75) evaluate with an fp32 FMA and convert back
+  // to bf16, matching cutlass::bfloat16_t's own pre-SM80 arithmetic fallback.
+  return bfloat16_t(fmaf(float(x), float(y), float(z)));
+#endif
 }
 
 // TVM lowers T.exp(bfloat16) to the CUDA half-style `hexp` name. TileLang uses
@@ -306,6 +401,42 @@ TL_DEVICE longlong4 make_longlong4(int x0, int x1, int y0, int y1, int z0,
   *((int2 *)&result.y) = make_int2(y0, y1);
   *((int2 *)&result.z) = make_int2(z0, z1);
   *((int2 *)&result.w) = make_int2(w0, w1);
+  return result;
+}
+
+// Pack thirty-two char values.
+TL_DEVICE longlong4
+make_longlong4(signed char x0, signed char x1, signed char x2, signed char x3,
+               signed char x4, signed char x5, signed char x6, signed char x7,
+               signed char y0, signed char y1, signed char y2, signed char y3,
+               signed char y4, signed char y5, signed char y6, signed char y7,
+               signed char z0, signed char z1, signed char z2, signed char z3,
+               signed char z4, signed char z5, signed char z6, signed char z7,
+               signed char w0, signed char w1, signed char w2, signed char w3,
+               signed char w4, signed char w5, signed char w6, signed char w7) {
+  longlong4 result;
+  *((int2 *)&result.x) = make_int2(x0, x1, x2, x3, x4, x5, x6, x7);
+  *((int2 *)&result.y) = make_int2(y0, y1, y2, y3, y4, y5, y6, y7);
+  *((int2 *)&result.z) = make_int2(z0, z1, z2, z3, z4, z5, z6, z7);
+  *((int2 *)&result.w) = make_int2(w0, w1, w2, w3, w4, w5, w6, w7);
+  return result;
+}
+
+// Pack thirty-two unsigned char values.
+TL_DEVICE ulonglong4 make_ulonglong4(
+    unsigned char x0, unsigned char x1, unsigned char x2, unsigned char x3,
+    unsigned char x4, unsigned char x5, unsigned char x6, unsigned char x7,
+    unsigned char y0, unsigned char y1, unsigned char y2, unsigned char y3,
+    unsigned char y4, unsigned char y5, unsigned char y6, unsigned char y7,
+    unsigned char z0, unsigned char z1, unsigned char z2, unsigned char z3,
+    unsigned char z4, unsigned char z5, unsigned char z6, unsigned char z7,
+    unsigned char w0, unsigned char w1, unsigned char w2, unsigned char w3,
+    unsigned char w4, unsigned char w5, unsigned char w6, unsigned char w7) {
+  ulonglong4 result;
+  *((uint2 *)&result.x) = make_uint2(x0, x1, x2, x3, x4, x5, x6, x7);
+  *((uint2 *)&result.y) = make_uint2(y0, y1, y2, y3, y4, y5, y6, y7);
+  *((uint2 *)&result.z) = make_uint2(z0, z1, z2, z3, z4, z5, z6, z7);
+  *((uint2 *)&result.w) = make_uint2(w0, w1, w2, w3, w4, w5, w6, w7);
   return result;
 }
 
@@ -771,6 +902,67 @@ TL_DEVICE uint1 pack_half2(half_t a, half_t b) {
   return uint1{packed};
 }
 
+// ============================================================================
+// Inline PTX FP16/BF16 Conversions with Stochastic Rounding
+// ============================================================================
+//
+// PTX packs operand a into the high half and operand b into the low half.
+// Reverse float2 lane order to preserve TVM's little-endian x/y layout.
+
+// --- float2 -> f16x2 stochastic rounding ---
+
+template <bool kDependentFalse = false>
+TL_DEVICE half2 __tl_cvt_f32x2_to_f16x2_rs_sat(float2 src, unsigned int rbits) {
+#if defined(__CUDA_ARCH_FEAT_SM100_ALL) || defined(__CUDA_ARCH_FEAT_SM103_ALL)
+  unsigned int result;
+  // FP32 -> FP16 consumes 13 random bits per lane; reserved bits must be zero.
+  rbits &= 0x1fff1fffU;
+  asm("cvt.rs.satfinite.f16x2.f32 %0, %1, %2, %3;"
+      : "=r"(result)
+      : "f"(src.y), "f"(src.x), "r"(rbits));
+  return *reinterpret_cast<half2 *>(&result);
+#else
+  static_assert(kDependentFalse,
+                "Stochastic rounding f32-to-FP16 requires sm_100a or sm_103a");
+  return {};
+#endif
+}
+
+template <bool kDependentFalse = false>
+TL_DEVICE unsigned short __tl_cvt_f32x1_to_f16x1_rs_sat(float src,
+                                                        unsigned int rbits) {
+  half2 result = __tl_cvt_f32x2_to_f16x2_rs_sat(make_float2(src, 0.0f), rbits);
+  return static_cast<unsigned short>(
+      *reinterpret_cast<unsigned int *>(&result));
+}
+
+// --- float2 -> bf16x2 stochastic rounding ---
+
+template <bool kDependentFalse = false>
+TL_DEVICE __nv_bfloat162 __tl_cvt_f32x2_to_bf16x2_rs_sat(float2 src,
+                                                         unsigned int rbits) {
+#if defined(__CUDA_ARCH_FEAT_SM100_ALL) || defined(__CUDA_ARCH_FEAT_SM103_ALL)
+  unsigned int result;
+  asm("cvt.rs.satfinite.bf16x2.f32 %0, %1, %2, %3;"
+      : "=r"(result)
+      : "f"(src.y), "f"(src.x), "r"(rbits));
+  return *reinterpret_cast<__nv_bfloat162 *>(&result);
+#else
+  static_assert(kDependentFalse,
+                "Stochastic rounding f32-to-BF16 requires sm_100a or sm_103a");
+  return {};
+#endif
+}
+
+template <bool kDependentFalse = false>
+TL_DEVICE unsigned short __tl_cvt_f32x1_to_bf16x1_rs_sat(float src,
+                                                         unsigned int rbits) {
+  __nv_bfloat162 result =
+      __tl_cvt_f32x2_to_bf16x2_rs_sat(make_float2(src, 0.0f), rbits);
+  return static_cast<unsigned short>(
+      *reinterpret_cast<unsigned int *>(&result));
+}
+
 template <uint64_t bytes, uint64_t init_val>
 TL_DEVICE void st_bulk_shared(void *smem_ptr) {
   static_assert(init_val == 0,
@@ -821,7 +1013,21 @@ TL_DEVICE __half2 add2(__half2 a, __half2 b) {
 // --- sub2 ----------------------------------------------------------------
 
 TL_DEVICE float2 sub2(float2 a, float2 b) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000) &&                       \
+    ((__CUDACC_VER_MAJOR__ > 12) ||                                            \
+     (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ >= 8))
+  unsigned long long const &a_bits =
+      reinterpret_cast<unsigned long long const &>(a);
+  unsigned long long const &b_bits =
+      reinterpret_cast<unsigned long long const &>(b);
+  unsigned long long result_bits;
+  asm("sub.rn.f32x2 %0, %1, %2;"
+      : "=l"(result_bits)
+      : "l"(a_bits), "l"(b_bits));
+  return reinterpret_cast<float2 const &>(result_bits);
+#else
   return make_float2(a.x - b.x, a.y - b.y);
+#endif
 }
 
 TL_DEVICE __nv_bfloat162 sub2(__nv_bfloat162 a, __nv_bfloat162 b) {
@@ -1134,6 +1340,35 @@ template <> TL_DEVICE uint1 shfl_up_sync(unsigned mask, uint1 val, int delta) {
 
 template <> TL_DEVICE uint1 shfl_sync(unsigned mask, uint1 val, int srcLane) {
   return uint1{__shfl_sync(mask, val.x, srcLane)};
+}
+
+// Specializations for float2. CUDA has no shuffle overload for float2, so
+// shuffle its two lanes together through the 64-bit integer overload.
+template <>
+TL_DEVICE float2 shfl_xor_sync(unsigned mask, float2 val, int laneMask) {
+  unsigned long long raw = reinterpret_cast<unsigned long long const &>(val);
+  raw = __shfl_xor_sync(mask, raw, laneMask);
+  return reinterpret_cast<float2 const &>(raw);
+}
+
+template <>
+TL_DEVICE float2 shfl_down_sync(unsigned mask, float2 val, int delta) {
+  unsigned long long raw = reinterpret_cast<unsigned long long const &>(val);
+  raw = __shfl_down_sync(mask, raw, delta);
+  return reinterpret_cast<float2 const &>(raw);
+}
+
+template <>
+TL_DEVICE float2 shfl_up_sync(unsigned mask, float2 val, int delta) {
+  unsigned long long raw = reinterpret_cast<unsigned long long const &>(val);
+  raw = __shfl_up_sync(mask, raw, delta);
+  return reinterpret_cast<float2 const &>(raw);
+}
+
+template <> TL_DEVICE float2 shfl_sync(unsigned mask, float2 val, int srcLane) {
+  unsigned long long raw = reinterpret_cast<unsigned long long const &>(val);
+  raw = __shfl_sync(mask, raw, srcLane);
+  return reinterpret_cast<float2 const &>(raw);
 }
 
 } // namespace tl

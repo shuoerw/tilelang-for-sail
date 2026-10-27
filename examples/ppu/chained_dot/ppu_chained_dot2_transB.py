@@ -1,5 +1,5 @@
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.transform import PassConfigKey
 import torch
 

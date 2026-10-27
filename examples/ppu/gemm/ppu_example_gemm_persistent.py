@@ -1,5 +1,5 @@
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang.transform import PassConfigKey
 from tilelang.carver.arch import driver
 import argparse
