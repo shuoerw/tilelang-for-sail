@@ -1,26 +1,8 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
-
 /*!
  *  Lower allreduce to device implementable ir.
  * \file lower_thread_allreduce.cc
  */
+#include "op/builtin.h"
 #include "support/check.h"
 #include <tvm/arith/analyzer.h>
 #include <tvm/ir/cast.h>
@@ -91,8 +73,9 @@ public:
 class ThreadAllreduceBuilder final : public StmtExprMutator {
 public:
   explicit ThreadAllreduceBuilder(const TargetNode *target,
-                                  bool is_dynamic = false)
-      : target_(target),
+                                  bool is_dynamic = false,
+                                  bool use_warp_sync_for_subword = true)
+      : target_(target), use_warp_sync_for_subword_(use_warp_sync_for_subword),
         warp_size_(
             target->GetAttr<Integer>("thread_warp_size", 1).value().IntValue()),
         max_num_threads_(target->GetAttr<Integer>("max_num_threads", -1)
@@ -738,8 +721,12 @@ private:
     // normal synchronization
     bool warp_align =
         group_extent == 1 || contiguous_reduce_extent % warp_size_ == 0;
+    bool require_block_sync =
+        !use_warp_sync_for_subword_ &&
+        std::any_of(types.begin(), types.end(),
+                    [](DataType ty) { return ty.bytes() < 4; });
     while (reduce_align > contiguous_reduce_extent ||
-           reduce_align > warp_size_ || !warp_align) {
+           reduce_align > warp_size_ || !warp_align || require_block_sync) {
       if (reduce_align == 1) {
         break;
       }
@@ -751,6 +738,9 @@ private:
     // in warp synchronization.
     if (reduce_align > 1) {
       PrimExpr in_warp_cond = reduce_index < (reduce_align >> 1);
+
+      Var active_mask("allreduce_active_mask", DataType::UInt(32));
+      Var participant_mask("allreduce_participant_mask", DataType::UInt(32));
 
       std::vector<Stmt> in_warp_seq;
 
@@ -776,10 +766,10 @@ private:
         }
 
         std::vector<Stmt> in_let_statement;
-        in_let_statement.emplace_back(SyncThread("warp"));
+        in_let_statement.emplace_back(SyncWarp(participant_mask));
         in_let_statement.emplace_back(
             fstore({in_warp_local_vars.begin(), in_warp_local_vars.end()}));
-        in_let_statement.emplace_back(SyncThread("warp"));
+        in_let_statement.emplace_back(SyncWarp(participant_mask));
 
         Stmt body = SeqStmt::Flatten(in_let_statement);
         for (size_t i = 0; i < size; i++) {
@@ -790,6 +780,15 @@ private:
 
       Stmt warp_body = SeqStmt::Flatten(in_warp_seq);
 
+      PrimExpr active_mask_value =
+          Call(DataType::UInt(64), tl::activemask(), {});
+      PrimExpr participant_mask_value = Call(
+          DataType::UInt(64), tl::ballot_sync(), {active_mask, in_warp_cond});
+
+      seq.emplace_back(
+          tirx::Bind(active_mask, Cast(DataType::UInt(32), active_mask_value)));
+      seq.emplace_back(tirx::Bind(
+          participant_mask, Cast(DataType::UInt(32), participant_mask_value)));
       seq.emplace_back(IfThenElse(in_warp_cond, warp_body));
       seq.emplace_back(SyncThread(shared_scope));
     }
@@ -826,10 +825,16 @@ private:
       return reduce_index;
     }
   }
+
   // sync thread op.
   static Stmt SyncThread(const std::string &sync) {
     return Evaluate(Call(DataType::Int(32), builtin::tvm_storage_sync(),
                          {StringImm(sync)}));
+  }
+
+  // sync warp op.
+  static Stmt SyncWarp(PrimExpr mask) {
+    return Evaluate(Call(DataType::Void(), tl::sync_warp(), {std::move(mask)}));
   }
 
   // Emit warp shuffle  calls.
@@ -913,6 +918,7 @@ private:
 
   // The target.
   const TargetNode *target_ = nullptr;
+  bool use_warp_sync_for_subword_{true};
   // The shared scope.
   String shared_scope = "shared";
   // The warp size of the device.
@@ -940,8 +946,9 @@ private:
 namespace transform {
 using namespace tirx::transform;
 
-tvm::transform::Pass LowerThreadAllreduce() {
-  auto pass_func = [](PrimFunc f, const IRModule &m, const PassContext &ctx) {
+tvm::transform::Pass LowerThreadAllreduce(bool use_warp_sync_for_subword) {
+  auto pass_func = [use_warp_sync_for_subword](PrimFunc f, const IRModule &m,
+                                               const PassContext &ctx) {
     AllocateCollector collector;
     collector(f->body);
     bool is_dynamic = collector.dyn_shmem_allocs_.size() > 1;
@@ -951,7 +958,8 @@ tvm::transform::Pass LowerThreadAllreduce() {
     ICHECK(target.defined())
         << "LowerThreadAllreduce: Require the target attribute";
     const TargetNode *target_node = target.as<TargetNode>();
-    ThreadAllreduceBuilder thread_all_reduce(target_node, is_dynamic);
+    ThreadAllreduceBuilder thread_all_reduce(target_node, is_dynamic,
+                                             use_warp_sync_for_subword);
     n->body = thread_all_reduce(n->body);
     return f;
   };
@@ -960,8 +968,11 @@ tvm::transform::Pass LowerThreadAllreduce() {
 
 TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = reflection;
-  refl::GlobalDef().def("tl.transform.LowerThreadAllreduce",
-                        LowerThreadAllreduce);
+  refl::GlobalDef()
+      .def("tl.transform.LowerThreadAllreduce",
+           []() { return LowerThreadAllreduce(true); })
+      .def("tl.ppu.transform.LowerThreadAllreduce",
+           []() { return LowerThreadAllreduce(false); });
 }
 
 } // namespace transform

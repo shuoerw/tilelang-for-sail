@@ -6,8 +6,8 @@
 #ifndef TVM_TL_BACKEND_PPU_OP_COPY_H_
 #define TVM_TL_BACKEND_PPU_OP_COPY_H_
 
-#include "op/builtin.h"
 #include "op/copy.h"
+#include "ppu/op/builtin.h"
 #include "support/check.h"
 
 #include <cstddef>

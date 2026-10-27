@@ -1,6 +1,7 @@
 // PPU: native HGGC runtime module — uses hg* driver APIs and hggc* runtime APIs
 // directly.
 #include "codegen_ppu.h"
+#include "config.h"
 #include "runtime/pack_args.h"
 #include "runtime/thread_storage_scope.h"
 #include "support/bytes_io.h"
@@ -477,6 +478,7 @@ Module BuildTileLangPPU(IRModule mod, Target target) {
   bool output_ssa = false;
   CodeGenTileLangPPU cg;
   cg.Init(output_ssa);
+  cg.SetEmitLineDirectives(tl::tl_config::EmitLineDirectivesEnabled());
 
   ValidateUniqueDeviceGlobalSymbols(mod);
   if (const auto f = Function::GetGlobal("tilelang_callback_ppu_validate")) {
@@ -523,6 +525,7 @@ Module BuildTileLangPPUWithoutCompile(IRModule mod, Target target) {
   bool output_ssa = false;
   CodeGenTileLangPPU cg;
   cg.Init(output_ssa);
+  cg.SetEmitLineDirectives(tl::tl_config::EmitLineDirectivesEnabled());
 
   ValidateUniqueDeviceGlobalSymbols(mod);
   if (const auto f = Function::GetGlobal("tilelang_callback_ppu_validate")) {

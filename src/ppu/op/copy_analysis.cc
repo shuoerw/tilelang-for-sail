@@ -7,8 +7,8 @@
 #include "support/check.h"
 #include <tvm/runtime/logging.h>
 
-#include "op/builtin.h"
 #include "op/utils.h"
+#include "ppu/op/builtin.h"
 #include "ppu/target_utils.h"
 
 #include <tvm/tirx/transform.h>

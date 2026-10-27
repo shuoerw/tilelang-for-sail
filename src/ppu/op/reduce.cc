@@ -17,15 +17,19 @@ using namespace tirx;
 namespace ppu {
 
 struct Reduce : backend::ReduceLowerer<Reduce> {
+  static bool AllReduceNeedsWorkspace(int reducing_threads, int, Target) {
+    return reducing_threads > 32;
+  }
+
   static bool SupportsFp16Bf16NanReduce(Target target) {
     return TargetIsPPU(target);
   }
 
-  static int GetPreferedVectorizedSize(DataType dt, Target target) {
+  static int GetPreferredVectorizedSize(const ReduceOpNode &op, Target target) {
     if (!TargetIsPPU(target)) {
       return 1;
     }
-    return backend::reduce::GetPreferedVectorizedSize(dt);
+    return backend::reduce::GetPreferredVectorizedSize(op.dst->dtype);
   }
 
   static std::string MakeBatchAllReduce(std::string reducer,

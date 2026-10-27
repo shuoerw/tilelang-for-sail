@@ -15,14 +15,14 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "target/source/codegen_c.h"
+#include "backend/common/codegen/codegen_c_line_directives.h"
 
 namespace tvm {
 namespace codegen {
 
 namespace ppu {
 
-class CodeGenTileLangPPU final : public CodeGenC {
+class CodeGenTileLangPPU final : public CodeGenCWithLineDirectives {
 public:
   CodeGenTileLangPPU();
   std::string Finish();
@@ -59,6 +59,8 @@ public:
   void VisitExpr_(const ShuffleNode *op, std::ostream &os) final;
   void VisitExpr_(const MinNode *op, std::ostream &os) final;
   void VisitExpr_(const MaxNode *op, std::ostream &os) final;
+  void VisitExpr_(const NotNode *op, std::ostream &os) final;
+  void VisitExpr_(const SelectNode *op, std::ostream &os) final;
   void VisitStmt_(const EvaluateNode *op) final;
   void VisitStmt_(const AllocBufferNode *op) final;
   void VisitStmt_(const AttrStmtNode *op) final;

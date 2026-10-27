@@ -27,7 +27,7 @@ if is_nvrtc_available:
 
 class NVRTCKernelAdapter(BaseKernelAdapter):
     pymodule = None
-    kernels = {}
+    kernels: dict[str, Any]
 
     def __init__(
         self,
@@ -93,6 +93,7 @@ class NVRTCKernelAdapter(BaseKernelAdapter):
         self.lib_generator.load_lib()
         self.libpath = self.lib_generator.libpath
         self.pymodule = self.lib_generator.pymodule
+        self.kernels = {}
         if is_ppu_target(self.target):
             for name in self.function_names:
                 self.kernels[name] = self.lib_generator.get_ppu_function(name)
@@ -156,6 +157,7 @@ class NVRTCKernelAdapter(BaseKernelAdapter):
         adapter.pymodule = adapter.lib_generator.pymodule
         adapter.function_names = adapter.pymodule._function_names
 
+        adapter.kernels = {}
         if is_ppu_target(adapter.target):
             for name in adapter.function_names:
                 adapter.kernels[name] = adapter.lib_generator.get_ppu_function(name)

@@ -6,7 +6,7 @@ from tvm.tirx import PrimFunc, SBlock
 from tvm.tirx.stmt_functor import post_order_visit
 
 import tilelang
-from tilelang.backend.pass_pipeline.pipeline import PassPipeline, register_pipeline
+from tilelang.backend.pass_pipeline.pipeline import PassPipeline
 from tilelang.backend.pass_pipeline.pipeline_utils import (
     LayoutVisual,
     allow_vectorize,
@@ -81,12 +81,18 @@ def PPUPassPipelineBodyPrologue(mod: IRModule, target: Target) -> IRModule:
     mod = tilelang.transform.InjectAssumes()(mod)
     # Simplify the IR expressions
     mod = tilelang.transform.Simplify()(mod)
-    # Set layouts for reducers
-    mod = tilelang.transform.LayoutReducer()(mod)
+    mod = tilelang.transform.CanonicalizeLegacyReducer()(mod)
+    mod = tilelang.transform.VerifyReducerEpoch()(mod)
+    mod = tilelang.transform.VerifyBufferInit()(mod)
 
     # Normalize if-without-else wrappers before pipeline planning. This keeps
     # pipeline body extraction focused on canonical SeqStmt bodies.
     mod = tilelang.transform.IfStmtBinding()(mod)
+
+    # Expand explicit unroll loops before scheduling so wait-group immediates
+    # and copy/compute units are constant when the software pipeline is built.
+    mod = tilelang.transform.UnrollLoop()(mod)
+    mod = tilelang.transform.Simplify()(mod)
 
     # Run pipeline planning and software-pipeline rewriting before layout
     # inference so inferred layouts see the final pipelined structure directly.
@@ -101,10 +107,12 @@ def PPUPassPipelineBodyPrologue(mod: IRModule, target: Target) -> IRModule:
     # @PPU-specific: Use PPU LayoutInference that handles GEMM RS SRCA
     # layout conflicts via trans_buffer mechanism
     mod = tilelang.ppu.transform.LayoutInference()(mod)
+    mod = tilelang.transform.ReducerPlanAndMaterialize()(mod)
     # Visualize the layout
     LayoutVisual(mod)
     # Lower high-level tile operations to low-level operations
     mod = tilelang.ppu.transform.LowerTileOp()(mod)
+    mod = tilelang.transform.VerifyReducerConsumed()(mod)
 
     # @PPU specific
     # Lower l2 persistent map
@@ -194,7 +202,7 @@ def PPUPassPipelineBody(mod: IRModule, target: Target) -> IRModule:
     # of putting the LowerThreadAllreduce before
     # the Legalization.
     mod = s_tir.transform.InferFragment()(mod)
-    mod = tilelang.transform.LowerThreadAllreduce()(mod)
+    mod = tilelang.ppu.transform.LowerThreadAllreduce()(mod)
 
     # @PPU-specific
     mod = tilelang.ppu.transform.LowerLDGSTG()(mod)
@@ -239,6 +247,5 @@ def PPUPassPipelineBody(mod: IRModule, target: Target) -> IRModule:
     return mod
 
 
-ppu_pipeline = PassPipeline("ppu", PPUPassPipelineBody)
-
-register_pipeline(ppu_pipeline)
+PPU_PIPELINE = PassPipeline("ppu", PPUPassPipelineBody)
+ppu_pipeline = PPU_PIPELINE

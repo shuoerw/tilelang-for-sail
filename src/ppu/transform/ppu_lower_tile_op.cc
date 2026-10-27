@@ -6,6 +6,7 @@
 #include "support/check.h"
 #include <optional>
 #include <tvm/ir/cast.h>
+#include <tvm/relax/analysis.h>
 #include <tvm/runtime/logging.h>
 #include <tvm/s_tir/utils.h>
 #include <tvm/tirx/builtin.h>
@@ -18,7 +19,6 @@
 
 #include "../../layout/layout.h"
 #include "../../layout/utils.h"
-#include "../../op/builtin.h"
 #include "../../op/gemm.h"
 #include "../../op/gemm_sp.h"
 #include "../../op/operator.h"
@@ -26,11 +26,12 @@
 #include "../layout/ppu_gemm_layouts.h"
 #include "backend/common/target_utils.h"
 #include "cuda/transform/ptx_async_copy_injector.h"
+#include "ppu/op/builtin.h"
 #include "ppu/target_utils.h"
+#include "span_utils.h"
 
 #include "../../transform/common/mbarrier.h"
 #include "../../transform/common/pipeline_utils.h"
-#include "../../transform/layout_reducer.h"
 #include "../../transform/loop_partition.h"
 #include "arith/ir_mutator_with_analyzer.h"
 
@@ -404,14 +405,40 @@ private:
     return block;
   }
 
-  int CheckAndGetBufferRowSize(const Buffer &buffer) {
-    ICHECK(buffer->shape.size() >= 2)
-        << "The dimension of Buffer \"" << buffer->name << "\" with shape "
-        << buffer->shape << " should be at least 2";
+  Array<PrimExpr> RemapAccessIndices(const Array<PrimExpr> &indices,
+                                     const Array<PrimExpr> &old_shape,
+                                     const Array<PrimExpr> &new_shape,
+                                     const Layout &layout,
+                                     const Optional<PrimExpr> &offset) {
+    ICHECK_EQ(indices.size(), old_shape.size())
+        << "The access rank must match the original buffer rank, but got "
+        << indices << " and " << old_shape;
+    ICHECK(!old_shape.empty())
+        << "Layout-remapped access pointers do not support scalar buffers";
+    const Array<PrimExpr> input_shape = layout->InputShape();
+    const Array<PrimExpr> output_shape = layout->OutputShape();
+    ICHECK(relax::CanProveShapeEqual(old_shape, input_shape, analyzer_))
+        << "The original buffer shape must match the layout input shape, but "
+           "got "
+        << old_shape << " and " << input_shape;
+    ICHECK(relax::CanProveShapeEqual(new_shape, output_shape, analyzer_))
+        << "The remapped buffer shape must match the layout output shape, but "
+           "got "
+        << new_shape << " and " << output_shape;
 
-    auto dim = buffer->shape.size();
-    auto buffer_row_size = buffer->shape[dim - 1].as<IntImmNode>()->value;
-    return buffer_row_size;
+    PrimExpr remaining_offset =
+        analyzer_->Simplify(offset.value_or(make_zero(indices[0].dtype())));
+    Array<PrimExpr> multi_dim_indices;
+    for (int i = static_cast<int>(old_shape.size()) - 1; i >= 0; --i) {
+      multi_dim_indices.insert(multi_dim_indices.begin(),
+                               floormod(remaining_offset, old_shape[i]));
+      remaining_offset = floordiv(remaining_offset, old_shape[i]);
+    }
+    for (size_t i = 0; i < indices.size(); ++i) {
+      multi_dim_indices.Set(
+          i, analyzer_->Simplify(indices[i] + multi_dim_indices[i]));
+    }
+    return layout->Forward(multi_dim_indices);
   }
 
   struct AccessPtrResult {
@@ -430,6 +457,26 @@ private:
     Map<Var, PrimExpr> subst_map;
     subst_map.Set(tx, warp_base);
     return analyzer_->Simplify(tirx::Substitute(offset, subst_map));
+  }
+
+  Array<PrimExpr> ApplyWarpBindingToIndices(const Array<PrimExpr> &indices,
+                                            const Array<PrimExpr> &shape) {
+    if (!use_warp_binding_ || !thread_binding_.defined()) {
+      return indices;
+    }
+    PrimExpr offset = make_zero(indices[0].dtype());
+    PrimExpr stride = make_const(indices[0].dtype(), 1);
+    for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
+      offset += indices[i] * stride;
+      stride *= shape[i];
+    }
+    offset = ApplyWarpBinding(analyzer_->Simplify(offset));
+    Array<PrimExpr> rebound;
+    for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
+      rebound.insert(rebound.begin(), floormod(offset, shape[i]));
+      offset = floordiv(offset, shape[i]);
+    }
+    return rebound;
   }
 
   AccessPtrResult
@@ -495,18 +542,12 @@ private:
       // Get original and new buffer shapes
       Array<PrimExpr> old_shape = original_buffer->shape;
       Array<PrimExpr> new_shape = new_buffer->shape;
-      // Convert linear offset to multi-dimensional indices
-      Array<PrimExpr> multi_dim_indices;
-      PrimExpr remaining_offset = elem_offset;
-      for (int i = static_cast<int>(old_shape.size()) - 1; i >= 0; --i) {
-        multi_dim_indices.insert(
-            multi_dim_indices.begin(),
-            analyzer_->Simplify(floormod(remaining_offset, old_shape[i])));
-        remaining_offset =
-            analyzer_->Simplify(floordiv(remaining_offset, old_shape[i]));
+      Array<PrimExpr> zero_indices;
+      for (size_t i = 0; i < old_shape.size(); ++i) {
+        zero_indices.push_back(make_zero(elem_offset.dtype()));
       }
-      // Apply layout transformation
-      auto forward_indices = layout->Forward(multi_dim_indices);
+      Array<PrimExpr> forward_indices = RemapAccessIndices(
+          zero_indices, old_shape, new_shape, layout, elem_offset);
       PrimExpr new_offset = 0;
       PrimExpr stride_offset = 1;
       for (int i = static_cast<int>(new_shape.size()) - 1; i >= 0; --i) {
@@ -573,48 +614,9 @@ private:
         return result;
       }
 
-      PrimExpr elem_offset = 0;
-      PrimExpr stride = 1;
-
-      for (int i = static_cast<int>(old_shape.size()) - 1; i >= 0; --i) {
-        elem_offset += indices[i] * stride;
-        stride *= old_shape[i];
-      }
-
-      PrimExpr smem_offset =
-          elem_offset + (offset.defined() ? offset.value() : 0);
-
-      auto buffer_map_iter = buffer_map_.find(Downcast<Var>(remap_key->data));
-
-      int buffer_row_size = CheckAndGetBufferRowSize(buffer_map_iter->second);
-      (void)buffer_row_size;
-
-      // Convert offset to target-dimension, reindex it and convert it back
-      Array<PrimExpr> multi_dim_indices;
-      PrimExpr remaining_offset = smem_offset;
-
-      for (int i = static_cast<int>(old_shape.size()) - 1; i >= 0; --i) {
-        multi_dim_indices.insert(multi_dim_indices.begin(),
-                                 floormod(remaining_offset, old_shape[i]));
-        remaining_offset = floordiv(remaining_offset, old_shape[i]);
-      }
-
-      auto forward_indices = layout.value()->Forward(multi_dim_indices);
-      PrimExpr new_offset = 0;
-      PrimExpr stride_offset = 1;
-      for (int i = static_cast<int>(new_shape.size()) - 1; i >= 0; --i) {
-        new_offset += forward_indices[i] * stride_offset;
-        stride_offset *= new_shape[i];
-      }
-      new_offset = analyzer_->Simplify(new_offset);
-      new_offset = ApplyWarpBinding(new_offset);
-
-      Array<PrimExpr> new_indices;
-      for (int i = static_cast<int>(new_shape.size()) - 1; i >= 0; --i) {
-        new_indices.insert(new_indices.begin(),
-                           floormod(new_offset, new_shape[i]));
-        new_offset = floordiv(new_offset, new_shape[i]);
-      }
+      Array<PrimExpr> new_indices = RemapAccessIndices(
+          indices, old_shape, new_shape, layout.value(), offset);
+      new_indices = ApplyWarpBindingToIndices(new_indices, new_shape);
 
       Array<PrimExpr> new_args = {BufferLoad(new_buffer, new_indices)};
       if (buffer_remap_.count(remap_key)) {
@@ -680,45 +682,9 @@ private:
         return result;
       }
 
-      PrimExpr elem_offset = 0;
-      PrimExpr stride = 1;
-      for (int i = static_cast<int>(old_shape.size()) - 1; i >= 0; --i) {
-        elem_offset += indices[i] * stride;
-        stride *= old_shape[i];
-      }
-
-      PrimExpr smem_offset =
-          elem_offset + (offset.defined() ? offset.value() : 0);
-
-      auto buffer_map_iter = buffer_map_.find(Downcast<Var>(remap_key->data));
-      int buffer_row_size = CheckAndGetBufferRowSize(buffer_map_iter->second);
-      (void)buffer_row_size;
-
-      // Convert offset to target-dimension, reindex it and convert it back
-      Array<PrimExpr> multi_dim_indices;
-      PrimExpr remaining_offset = smem_offset;
-      for (int i = static_cast<int>(old_shape.size()) - 1; i >= 0; --i) {
-        multi_dim_indices.insert(multi_dim_indices.begin(),
-                                 floormod(remaining_offset, old_shape[i]));
-        remaining_offset = floordiv(remaining_offset, old_shape[i]);
-      }
-
-      auto forward_indices = layout.value()->Forward(multi_dim_indices);
-      PrimExpr new_offset = 0;
-      PrimExpr stride_offset = 1;
-      for (int i = static_cast<int>(new_shape.size()) - 1; i >= 0; --i) {
-        new_offset += forward_indices[i] * stride_offset;
-        stride_offset *= new_shape[i];
-      }
-      new_offset = analyzer_->Simplify(new_offset);
-      new_offset = ApplyWarpBinding(new_offset);
-
-      Array<PrimExpr> new_indices;
-      for (int i = static_cast<int>(new_shape.size()) - 1; i >= 0; --i) {
-        new_indices.insert(new_indices.begin(),
-                           floormod(new_offset, new_shape[i]));
-        new_offset = floordiv(new_offset, new_shape[i]);
-      }
+      Array<PrimExpr> new_indices = RemapAccessIndices(
+          indices, old_shape, new_shape, layout.value(), offset);
+      new_indices = ApplyWarpBindingToIndices(new_indices, new_shape);
 
       Array<PrimExpr> new_args = {BufferLoad(new_buffer, new_indices), extent,
                                   rw_mask};
@@ -1168,6 +1134,7 @@ private:
     lower_args.require_smem_alignment = require_smem_alignment_callback;
 
     auto lowered = tile_op->Lower(lower_args, analyzer_);
+    StampSubtreeSpans(lowered, op->span);
 
     return IRMutatorWithAnalyzer::VisitStmt(lowered);
   }
@@ -1209,33 +1176,15 @@ private:
   Stmt VisitStmt_(const ForNode *op) final {
     bool pushed_loop_mbar_phase = false;
     if (op->kind == ForKind::kSerial) {
-      int num_stages = 1;
-      if (auto ns_anno = op->annotations.Get("num_stages")) {
-        if (const auto *ns_int = ns_anno.value().as<IntImmNode>()) {
-          if (ns_int->value > 1) {
-            num_stages = static_cast<int>(ns_int->value);
-          }
-        }
-      }
-      PrimExpr phase_expr;
       DataType loop_dtype = op->loop_var.dtype();
-      PrimExpr two = make_const(loop_dtype, 2);
-      if (num_stages > 1) {
-        PrimExpr num_stages_expr = make_const(loop_dtype, num_stages);
-        phase_expr = FloorMod(FloorDiv(op->loop_var, num_stages_expr), two);
-      } else {
-        phase_expr = FloorMod(op->loop_var, two);
-      }
-      loop_mbar_phase_stack_.push_back(analyzer_->Simplify(phase_expr));
+      PrimExpr step = op->step.defined() ? op->step.value()
+                                         : PrimExpr(make_const(loop_dtype, 1));
+      PrimExpr loop_epoch =
+          analyzer_->Simplify(FloorDiv(op->loop_var - op->min, step));
+      PrimExpr phase =
+          analyzer_->Simplify(FloorMod(loop_epoch, make_const(loop_dtype, 2)));
+      loop_mbar_phase_stack_.push_back(phase);
       pushed_loop_mbar_phase = true;
-    }
-
-    // Extract reducer info from annotations
-    Map<Var, ReducerInfo> reducer_info;
-    if (op->annotations.count(attr::kReducerInfo)) {
-      reducer_info = op->annotations.Get(attr::kReducerInfo)
-                         ->as<Map<Var, ReducerInfo>>()
-                         .value();
     }
 
     // First visit the body.
@@ -1390,69 +1339,11 @@ private:
     // iteration has to be owned by the corresponding thread.
     bool parallel_loop = has_non_local_store || has_fragment_access;
 
-    // Check if there are non-local buffer accesses (for vectorization decision)
-    bool has_non_local = false;
-    PostOrderVisit(for_node->body, [&](const ObjectRef &obj) {
-      if (const auto *load = obj.as<BufferLoadNode>()) {
-        if (!IsLocalBuffer(load->buffer, /*allow_var*/ true) &&
-            !IsFragmentBuffer(load->buffer)) {
-          has_non_local = true;
-        }
-      } else if (const auto *store = obj.as<BufferStoreNode>()) {
-        if (!IsLocalBuffer(store->buffer, /*allow_var*/ true) &&
-            !IsFragmentBuffer(store->buffer)) {
-          has_non_local = true;
-        }
-      }
-    });
-
-    // Check if reducers are present in the loop body
-    // Workaround: if reducer is presented, don't vectorize loop
-    // Best solution should be isolate reduction axis out of vectorization
-    //
-    // Note: reducer_info stores original buffer data vars, but after visiting
-    // the body, buffers may have been remapped via var_remap_. We need to find
-    // the original var to check against reducer_info.
-    bool has_reducer = false;
-    PostOrderVisit(for_node->body, [&](const ObjectRef &obj) {
-      if (!has_reducer) {
-        if (const auto *store = obj.as<BufferStoreNode>()) {
-          Var data_var = store->buffer->data;
-          // Find the original var if it was remapped
-          // var_remap_ maps old_var -> new_var, so we need reverse lookup
-          Var original_var = data_var;
-          for (const auto &[old_var, new_var] : var_remap_) {
-            if (new_var.same_as(data_var)) {
-              original_var = old_var;
-              break;
-            }
-          }
-          has_reducer = reducer_info.count(original_var) != 0;
-        }
-      }
-    });
-
-    // Check if vectorizable cast operations exist
-    bool has_cast_operations = false;
-    PostOrderVisit(for_node->body, [&](const ObjectRef &obj) {
-      if (const auto *cast = obj.as<CastNode>()) {
-        DataType from_ty = cast->value.dtype();
-        DataType target_ty = cast->dtype;
-        if (IsPpuVectorizableCast(from_ty, target_ty)) {
-          has_cast_operations = true;
-        }
-      }
-    });
-
-    // Decide whether to vectorize:
-    // - Only if there are non-local buffers or vectorizable casts
-    // - AND no reducers are present
-    bool should_vectorize =
-        (has_non_local || has_cast_operations) && !has_reducer;
-    // Lower the parallel loop using the common function
+    // Lower the parallel loop using the common function. Vectorization and
+    // reducer multiplicity are handled by the upstream loop/reducer planners.
     Stmt lowered = LowerParallelLoop(
         for_node, loop_layout, CurrentThreadIndex(), analyzer_, layout_map_,
-        predicate, parallel_loop, should_vectorize, require_padding_guard);
+        predicate, parallel_loop, require_padding_guard);
 
     if (TargetHasAsyncCopy(target_)) {
       tvm::transform::PassContext ctx = tvm::transform::PassContext::Current();
@@ -1467,6 +1358,7 @@ private:
         lowered = inject_result.stmt;
       }
     }
+    StampSubtreeSpans(lowered, op->span);
     return lowered;
   }
 

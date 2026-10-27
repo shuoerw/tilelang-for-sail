@@ -116,43 +116,73 @@ TL_DEVICE void tl_atomic_add_bf16(unsigned short &ret, unsigned long long addr,
   }
 }
 
-// Fallback implementations: do atomicAdd sequentially.
+template <typename T1, typename T2>
+TL_DEVICE T1 AtomicAddScalarRet(T1 *address, T2 val, int memory_order) {
+  using NT1 = typename normalize_atomic_type<T1>::type;
+  if constexpr (std::is_same_v<NT1, half> ||
+                std::is_same_v<NT1, __ppu_bfloat16>) {
+    if (IsRelaxedMemoryOrder(memory_order)) {
+      return static_cast<T1>(
+          atomicAdd(reinterpret_cast<NT1 *>(address), hggc_cast<NT1>(val)));
+    }
+    unsigned short ret_bits;
+    unsigned long long ref_address =
+        reinterpret_cast<unsigned long long>(address);
+    unsigned short val_bits = PackBits16(hggc_cast<NT1>(val));
+    if constexpr (std::is_same_v<NT1, half>) {
+      tl_atomic_add_f16(ret_bits, ref_address, val_bits, memory_order);
+      return static_cast<T1>(UnpackBits16<half>(ret_bits));
+    } else {
+      tl_atomic_add_bf16(ret_bits, ref_address, val_bits, memory_order);
+      return static_cast<T1>(UnpackBits16<__ppu_bfloat16>(ret_bits));
+    }
+  } else {
+    hggc::atomic_ref<NT1, hggc::thread_scope_device> aref(*address);
+    return static_cast<T1>(
+        aref.fetch_add(hggc_cast<NT1>(val), hggc::memory_order(memory_order)));
+  }
+}
 
-template <typename T> TL_DEVICE void AtomicAddx2Scalar(T *ref, T x, T y) {
-  atomicAdd(ref + 0, x);
-  atomicAdd(ref + 1, y);
+// Fallback implementations: do ordered scalar atomic adds sequentially.
+
+template <typename T>
+TL_DEVICE void AtomicAddx2Scalar(T *ref, T x, T y, int memory_order) {
+  (void)AtomicAddScalarRet(ref + 0, x, memory_order);
+  (void)AtomicAddScalarRet(ref + 1, y, memory_order);
 }
 
 template <typename T>
-TL_DEVICE void AtomicAddx4Scalar(T *ref, T x, T y, T z, T w) {
-  atomicAdd(ref + 0, x);
-  atomicAdd(ref + 1, y);
-  atomicAdd(ref + 2, z);
-  atomicAdd(ref + 3, w);
+TL_DEVICE void AtomicAddx4Scalar(T *ref, T x, T y, T z, T w, int memory_order) {
+  (void)AtomicAddScalarRet(ref + 0, x, memory_order);
+  (void)AtomicAddScalarRet(ref + 1, y, memory_order);
+  (void)AtomicAddScalarRet(ref + 2, z, memory_order);
+  (void)AtomicAddScalarRet(ref + 3, w, memory_order);
 }
 
-TL_DEVICE float2 AtomicAddx2ScalarRet(float *ref, float2 add_val) {
+TL_DEVICE float2 AtomicAddx2ScalarRet(float *ref, float2 add_val,
+                                      int memory_order) {
   float2 ret;
-  ret.x = atomicAdd(ref + 0, add_val.x);
-  ret.y = atomicAdd(ref + 1, add_val.y);
+  ret.x = AtomicAddScalarRet(ref + 0, add_val.x, memory_order);
+  ret.y = AtomicAddScalarRet(ref + 1, add_val.y, memory_order);
   return ret;
 }
 
 template <typename VecT, typename T>
-TL_DEVICE VecT AtomicAddx2ScalarRet(T *ref, VecT add_val) {
+TL_DEVICE VecT AtomicAddx2ScalarRet(T *ref, VecT add_val, int memory_order) {
   VecT ret;
-  ret.x = atomicAdd(ref + 0, add_val.x);
-  ret.y = atomicAdd(ref + 1, add_val.y);
+  ret.x = AtomicAddScalarRet(ref + 0, add_val.x, memory_order);
+  ret.y = AtomicAddScalarRet(ref + 1, add_val.y, memory_order);
   return ret;
 }
 
 template <typename dst_dtype>
-TL_DEVICE float4 AtomicAddx4ScalarRet(dst_dtype *ref, float4 add_val) {
+TL_DEVICE float4 AtomicAddx4ScalarRet(dst_dtype *ref, float4 add_val,
+                                      int memory_order) {
   float4 ret;
-  ret.x = atomicAdd(ref + 0, add_val.x);
-  ret.y = atomicAdd(ref + 1, add_val.y);
-  ret.z = atomicAdd(ref + 2, add_val.z);
-  ret.w = atomicAdd(ref + 3, add_val.w);
+  ret.x = AtomicAddScalarRet(ref + 0, add_val.x, memory_order);
+  ret.y = AtomicAddScalarRet(ref + 1, add_val.y, memory_order);
+  ret.z = AtomicAddScalarRet(ref + 2, add_val.z, memory_order);
+  ret.w = AtomicAddScalarRet(ref + 3, add_val.w, memory_order);
   return ret;
 }
 
@@ -269,50 +299,13 @@ TL_DEVICE T1 AtomicMinRet(T1 *ref, T2 val,
 template <typename T1, typename T2>
 TL_DEVICE void AtomicAdd(T1 *address, T2 val,
                          int memory_order = int(hggc::memory_order_relaxed)) {
-  using NT1 = typename normalize_atomic_type<T1>::type;
-  (void)memory_order;
-  atomicAdd(reinterpret_cast<NT1 *>(address), hggc_cast<NT1>(val));
+  (void)tl_atomic_detail::AtomicAddScalarRet(address, val, memory_order);
 }
 
 template <typename T1, typename T2>
 TL_DEVICE T1 AtomicAddRet(T1 *address, T2 val,
                           int memory_order = int(hggc::memory_order_relaxed)) {
-  using NT1 = typename normalize_atomic_type<T1>::type;
-  if constexpr (std::is_same_v<NT1, half> ||
-                std::is_same_v<NT1, __ppu_bfloat16>) {
-    if (tl_atomic_detail::IsRelaxedMemoryOrder(memory_order)) {
-      return static_cast<T1>(
-          atomicAdd(reinterpret_cast<NT1 *>(address), static_cast<NT1>(val)));
-    } else {
-      if constexpr (std::is_same_v<NT1, half>) {
-        // fp16
-        unsigned short ret_val_cast;
-        unsigned long long ref_address =
-            reinterpret_cast<unsigned long long>(address);
-        unsigned short val_cast =
-            tl_atomic_detail::PackBits16(hggc_cast<NT1>(val));
-        tl_atomic_detail::tl_atomic_add_f16(ret_val_cast, ref_address, val_cast,
-                                            memory_order);
-        return static_cast<T1>(
-            tl_atomic_detail::UnpackBits16<__half>(ret_val_cast));
-      } else if constexpr (std::is_same_v<NT1, __ppu_bfloat16>) {
-        // bf16
-        unsigned short ret_val_cast;
-        unsigned long long ref_address =
-            reinterpret_cast<unsigned long long>(address);
-        unsigned short val_cast =
-            tl_atomic_detail::PackBits16(hggc_cast<NT1>(val));
-        tl_atomic_detail::tl_atomic_add_bf16(ret_val_cast, ref_address,
-                                             val_cast, memory_order);
-        return static_cast<T1>(
-            tl_atomic_detail::UnpackBits16<__ppu_bfloat16>(ret_val_cast));
-      }
-    }
-  } else {
-    hggc::atomic_ref<NT1, hggc::thread_scope_device> aref(*address);
-    return static_cast<T1>(
-        aref.fetch_add(hggc_cast<NT1>(val), hggc::memory_order(memory_order)));
-  }
+  return tl_atomic_detail::AtomicAddScalarRet(address, val, memory_order);
 }
 
 // For vectorized AtomicAdd, we maintain two versions of interfaces:
@@ -348,9 +341,9 @@ TL_DEVICE void AtomicAddx2(half_t *ref, ValType val,
   } else {
     // No vectorized atomic with memory order: fall back to scalar atomicAdd,
     // consistent with the f32 version.
-    tl_atomic_detail::AtomicAddx2Scalar(reinterpret_cast<half *>(ref),
-                                        static_cast<half>(add_val.x),
-                                        static_cast<half>(add_val.y));
+    tl_atomic_detail::AtomicAddx2Scalar(
+        reinterpret_cast<half *>(ref), static_cast<half>(add_val.x),
+        static_cast<half>(add_val.y), memory_order);
   }
 }
 
@@ -365,7 +358,7 @@ AtomicAddx2Ret(half_t *ref, ValType val,
     // No vectorized atomic with memory order: fall back to scalar atomicAdd,
     // consistent with the f32 version.
     return tl_atomic_detail::AtomicAddx2ScalarRet(reinterpret_cast<half *>(ref),
-                                                  add_val);
+                                                  add_val, memory_order);
   }
 }
 
@@ -402,7 +395,8 @@ TL_DEVICE void AtomicAddx2(bfloat16_t *ref, ValType val,
     // consistent with the f32 version.
     tl_atomic_detail::AtomicAddx2Scalar(reinterpret_cast<__ppu_bfloat16 *>(ref),
                                         static_cast<__ppu_bfloat16>(add_val.x),
-                                        static_cast<__ppu_bfloat16>(add_val.y));
+                                        static_cast<__ppu_bfloat16>(add_val.y),
+                                        memory_order);
   }
 }
 
@@ -419,7 +413,7 @@ AtomicAddx2Ret(bfloat16_t *ref, src_type *val,
     // No vectorized atomic with memory order: fall back to scalar atomicAdd,
     // consistent with the f32 version.
     return tl_atomic_detail::AtomicAddx2ScalarRet(
-        reinterpret_cast<__ppu_bfloat16 *>(ref), add_val);
+        reinterpret_cast<__ppu_bfloat16 *>(ref), add_val, memory_order);
   }
 }
 
@@ -454,36 +448,32 @@ TL_DEVICE float4 ToFloat4(float4 val) { return val; }
 template <typename ValType>
 TL_DEVICE void AtomicAddx2(float *ref, ValType val,
                            int memory_order = int(hggc::memory_order_relaxed)) {
-  (void)memory_order;
   float2 add_val = ToFloat2(val);
-  tl_atomic_detail::AtomicAddx2Scalar(ref, add_val.x, add_val.y);
+  tl_atomic_detail::AtomicAddx2Scalar(ref, add_val.x, add_val.y, memory_order);
 }
 
 template <typename ValType>
 TL_DEVICE float2
 AtomicAddx2Ret(float *ref, ValType val,
                int memory_order = int(hggc::memory_order_relaxed)) {
-  (void)memory_order;
   float2 add_val = ToFloat2(val);
-  return tl_atomic_detail::AtomicAddx2ScalarRet(ref, add_val);
+  return tl_atomic_detail::AtomicAddx2ScalarRet(ref, add_val, memory_order);
 }
 
 template <typename dst_dtype, typename ValType>
 TL_DEVICE void AtomicAddx4(dst_dtype *ref, ValType val,
                            int memory_order = int(hggc::memory_order_relaxed)) {
-  (void)memory_order;
   float4 add_val = ToFloat4(val);
   tl_atomic_detail::AtomicAddx4Scalar(ref, add_val.x, add_val.y, add_val.z,
-                                      add_val.w);
+                                      add_val.w, memory_order);
 }
 
 template <typename dst_dtype, typename ValType>
 TL_DEVICE float4
 AtomicAddx4Ret(dst_dtype *ref, ValType val,
                int memory_order = int(hggc::memory_order_relaxed)) {
-  (void)memory_order;
   float4 add_val = ToFloat4(val);
-  return tl_atomic_detail::AtomicAddx4ScalarRet(ref, add_val);
+  return tl_atomic_detail::AtomicAddx4ScalarRet(ref, add_val, memory_order);
 }
 
 template <hggc::thread_scope Scope = hggc::thread_scope_device, typename T>
