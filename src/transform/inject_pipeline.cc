@@ -3028,6 +3028,13 @@ private:
         preserved_annotations.Set("tl_pipelined_num_stages",
                                   pipeline_num_stages.value());
       }
+      if (unroll_loop) {
+        // Prologue/epilogue bodies carry stage-dependent immediates such as
+        // async wait counts, which codegen can only emit once the loop var is
+        // substituted. A `#pragma unroll` hint is not enough.
+        preserved_annotations.Set(tirx::attr::pragma_unroll_explicit,
+                                  Integer(1));
+      }
       new_loop = For(Downcast<Var>(new_loop_var), pipeline_loop_->min, extent,
                      unroll_loop ? ForKind::kUnrolled : pipeline_loop_->kind,
                      std::move(new_loop), std::nullopt, preserved_annotations,

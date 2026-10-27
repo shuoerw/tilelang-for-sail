@@ -29,8 +29,8 @@
 #include <tvm/tirx/transform.h>
 
 #include "backend/common/target_utils.h"
-#include "ppu/op/builtin.h"
 #include "op/utils.h"
+#include "ppu/op/builtin.h"
 #include "tir/ir/buffer_common.h"
 
 namespace tvm {

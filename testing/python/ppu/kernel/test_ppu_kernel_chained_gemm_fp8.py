@@ -61,9 +61,11 @@ def _chained_gemm(
 
         # Materialize the first GEMM's accumulator registers using their
         # physical per-lane indices, then express the C -> A ownership change
-        # entirely with warp shuffles.  No shared-memory bridge is involved.
+        # entirely with warp shuffles. T.bind marks the local index as a
+        # physical per-thread slot rather than a distributed logical dimension.
         for i, j in T.Parallel(M, K, loop_layout=c_layout):
-            score_registers[(j // 16) * 8 + ((j % 16) // 8) * 4 + (i // 8) * 2 + j % 2] = scores[i, j]
+            score_slot = T.bind((j // 16) * 8 + ((j % 16) // 8) * 4 + (i // 8) * 2 + j % 2)
+            score_registers[score_slot] = scores[i, j]
 
         lane = T.get_lane_idx()
         quad = lane % 4
@@ -73,14 +75,10 @@ def _chained_gemm(
             atom = j // 16
             byte = j % 4
             source_lane = warp_row * 4 + (quad % 2) * 2 + byte // 2
-            low = T.shfl_sync(
-                score_registers[atom * 8 + row_half * 2 + byte % 2],
-                source_lane,
-            )
-            high = T.shfl_sync(
-                score_registers[atom * 8 + 4 + row_half * 2 + byte % 2],
-                source_lane,
-            )
+            low_slot = T.bind(atom * 8 + row_half * 2 + byte % 2)
+            high_slot = T.bind(atom * 8 + 4 + row_half * 2 + byte % 2)
+            low = T.shfl_sync(score_registers[low_slot], source_lane)
+            high = T.shfl_sync(score_registers[high_slot], source_lane)
             probabilities[i, j] = T.cast(T.if_then_else(quad < 2, low, high), FP8)
 
         T.clear(result)
@@ -100,7 +98,8 @@ def test_fp8_chained_gemm_with_packed_register_relayout():
     kernel = tilelang.compile(_chained_gemm, out_idx=[3])
     source = kernel.get_kernel_source()
 
-    # Exact codegen counts complement the transform-level IR assertions.
+    # Four logical FP8 values share each shuffled uint32 carrier, so the
+    # relayout needs two shuffles and one byte permute per packed group.
     assert source.count("__shfl_sync") == 2
     assert source.count("__byte_perm") == 1
     assert source.count("tl::mma_sync") >= 2

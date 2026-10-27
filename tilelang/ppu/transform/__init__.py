@@ -3,6 +3,11 @@
 from .. import _ffi_api
 
 
+def LowerThreadAllreduce():
+    """Lower thread allreduce with PPU-safe subword synchronization."""
+    return _ffi_api.LowerThreadAllreduce()  # type: ignore
+
+
 def LowerL2Persistent():
     """LowerL2Persistent."""
     # PPU: call the independently registered PPU transform implementation.
@@ -84,6 +89,7 @@ __all__ = [
     "InjectPpuUniform",
     "LowerL2PersistentCache",
     "LowerLDGSTG",
+    "LowerThreadAllreduce",
     "LowerL2Persistent",
     "LowerTileOp",
     "AnnotateChainedGemm",

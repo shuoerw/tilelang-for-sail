@@ -1378,7 +1378,7 @@ void CodeGenTileLangPPU::PrintVecElemStore(const std::string &vec, DataType t,
       std::string ac = t.lanes() == 4 ? vec : (vec + "." + access[i / 4]);
       stream << ac << "=";
       // Do not read the first undef lane.
-      if (i != 0) {
+      if (i % 4 != 0) {
         stream << ac << " & ~(0x000000ff << " << i % 4 * 8 << ") |";
       }
       stream << "(" << value << " << " << i % 4 * 8 << ");\n";
@@ -1387,10 +1387,12 @@ void CodeGenTileLangPPU::PrintVecElemStore(const std::string &vec, DataType t,
       std::string ac = vec + "." + access[i / 8];
       stream << ac << "=";
       // Do not read the first undef lane.
-      if (i != 0) {
-        stream << ac << " & ~(0x000000ff << " << i % 8 * 8 << ") |";
+      if (i % 8 != 0) {
+        stream << ac << " & ~(static_cast<unsigned long long>(0x000000ffu) << "
+               << i % 8 * 8 << ") |";
       }
-      stream << "(" << value << " << " << i % 8 * 8 << ");\n";
+      stream << "((static_cast<unsigned long long>(" << value
+             << ") & 0xffULL) << " << i % 8 * 8 << ");\n";
     }
   } else if (t.is_float16()) {
     if (t.lanes() <= 8) {
@@ -3876,6 +3878,23 @@ bool CodeGenTileLangPPU::HandleLateIntrinsicCall(const CallNode *op,
     }
     this->stream << ");\n";
     return true;
+  } else if (op->op.same_as(tl::atomic_addx2_ret_elem_op()) ||
+             op->op.same_as(tl::atomic_addx4_ret_elem_op())) {
+    bool is_x2 = op->op.same_as(tl::atomic_addx2_ret_elem_op());
+    ICHECK(is_x2 || (op->dtype.is_float() && op->dtype.bits() == 32))
+        << "PPU atomic_addx4 return_prev only supports float32";
+    bool need_cast =
+        is_x2 && (op->dtype.is_float16() || op->dtype.is_bfloat16());
+    if (need_cast) {
+      os << "tl::to_uint1(";
+    }
+    os << "AtomicAddx" << (is_x2 ? 2 : 4) << "Ret(" << PrintExpr(op->args[0])
+       << ", " << PrintExpr(op->args[1]);
+    if (op->args.size() > 2) {
+      os << ", " << PrintExpr(op->args[2]);
+    }
+    os << (need_cast ? "))" : ")");
+    return true;
   } else if (op->op.same_as(tl::atomic_load_elem_op())) {
     // atomic_load_elem_op(src_ptr, memory_order[, scope]) -> returns loaded
     // value
@@ -4381,6 +4400,69 @@ void CodeGenTileLangPPU::VisitStmt_(const BufferStoreNode *op) {
       EndScope(vec_scope);
     }
   }
+}
+
+void CodeGenTileLangPPU::VisitExpr_(const SelectNode *op, std::ostream &os) {
+  if (!op->condition.dtype().is_fixed_length_vector()) {
+    CodeGenC::VisitExpr_(op, os);
+    return;
+  }
+
+  TVM_FFI_ICHECK(op->false_value->dtype == op->dtype &&
+                 op->true_value->dtype == op->dtype &&
+                 op->dtype.lanes() == op->condition.dtype().lanes());
+
+  std::string r_var = name_supply_->FreshName("_");
+  this->PrintIndent();
+  this->PrintType(op->dtype, stream);
+  stream << ' ' << r_var << ";\n";
+  {
+    std::string c_var =
+        SSAGetID(PrintExpr(op->condition), op->condition.dtype());
+    std::string t_var = SSAGetID(PrintExpr(op->true_value), op->dtype);
+    std::string f_var = SSAGetID(PrintExpr(op->false_value), op->dtype);
+
+    int lanes = op->dtype.lanes();
+    DataType memory_ty(DataType::TypeCode::kUInt, 16, lanes);
+
+    for (int i = 0; i < lanes; ++i) {
+      std::ostringstream item;
+      item << "(bool(";
+      PrintVecElemLoad(c_var, memory_ty, i, item);
+      item << ")?";
+      PrintVecElemLoad(t_var, op->dtype, i, item);
+      item << ':';
+      PrintVecElemLoad(f_var, op->dtype, i, item);
+      item << ')';
+      PrintVecElemStore(r_var, op->dtype, i, item.str());
+    }
+  }
+  os << r_var;
+}
+
+void CodeGenTileLangPPU::VisitExpr_(const NotNode *op, std::ostream &os) {
+  if (!op->dtype.is_fixed_length_vector()) {
+    CodeGenC::VisitExpr_(op, os);
+    return;
+  }
+
+  std::string result = name_supply_->FreshName("_");
+  this->PrintIndent();
+  this->PrintType(op->dtype, stream);
+  stream << ' ' << result << ";\n";
+  int ssa_scope = BeginScope();
+  {
+    std::string value = SSAGetID(PrintExpr(op->a), op->a.dtype());
+    for (int i = 0; i < op->dtype.lanes(); ++i) {
+      std::ostringstream lane;
+      lane << "!bool(";
+      PrintVecElemLoad(value, op->a.dtype(), i, lane);
+      lane << ')';
+      PrintVecElemStore(result, op->dtype, i, lane.str());
+    }
+  }
+  EndScope(ssa_scope);
+  os << result;
 }
 
 void CodeGenTileLangPPU::VisitExpr_(const ShuffleNode *op,

@@ -4,7 +4,7 @@
 
 TileLang is a concise, efficient DSL built on top of TVM for developing high-performance GPU/CPU kernels with Pythonic syntax. This repository extends TileLang with a complete PPU hardware backend, enabling it to compile and generate kernels that run natively on PPU hardware.
 
-Based on TileLang v0.1.12 (upstream commit `2d63708c`). For the full upstream documentation — DSL syntax, programming guides, tutorials, and benchmarks — see [README_UPSTREAM.md](./README_UPSTREAM.md) or the [TileLang GitHub](https://github.com/tile-ai/tilelang).
+Based on TileLang v0.1.14 (upstream commit `7e3bbf37`). For the full upstream documentation — DSL syntax, programming guides, tutorials, and benchmarks — see [README_UPSTREAM.md](./README_UPSTREAM.md) or the [TileLang GitHub](https://github.com/tile-ai/tilelang).
 
 ## PPU Backend Extensions and Optimizations
 

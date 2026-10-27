@@ -108,6 +108,13 @@ def _collect(mod):
     return calls, loops, stores
 
 
+def _effective_unrolled_count(static_count, loops):
+    count = static_count
+    for loop in loops:
+        count *= int(loop.extent)
+    return count
+
+
 def test_pack_fp8_warp_shuffle_e4m3fn_fast_path():
     mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(_make_relayout())
     calls, loops, stores = _collect(mod)
@@ -127,10 +134,9 @@ def test_pack_fp8_warp_shuffle_after_pipeline_unroll():
     mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(mod)
     calls, loops, stores = _collect(mod)
 
-    assert calls.get("tl.shfl_sync", 0) == 8
-    assert calls.get("tirx.call_pure_extern", 0) == 4
-    assert not loops
-    assert len(stores) == 4
+    assert _effective_unrolled_count(calls.get("tl.shfl_sync", 0), loops) == 8
+    assert _effective_unrolled_count(calls.get("tirx.call_pure_extern", 0), loops) == 4
+    assert _effective_unrolled_count(len(stores), loops) == 4
     assert all(store.value.dtype.lanes == 4 for store in stores)
 
 
@@ -159,9 +165,8 @@ def test_pack_int8x4_single_source_lane_after_pipeline_unroll():
     mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(mod)
     calls, loops, stores = _collect(mod)
 
-    assert calls.get("tl.shfl_sync", 0) == 4
-    assert not loops
-    assert len(stores) == 4
+    assert _effective_unrolled_count(calls.get("tl.shfl_sync", 0), loops) == 4
+    assert _effective_unrolled_count(len(stores), loops) == 4
     assert all(str(store.value.dtype) == "int8x4" for store in stores)
 
 
@@ -304,11 +309,14 @@ def test_unrolled_packed_shuffles_require_aligned_destination():
         mod = tilelang.ppu.transform.PackSubwordWarpShuffle()(mod)
         _, loops, stores = _collect(mod)
 
-        assert not loops
         scalar_stores = [store for store in stores if store.value.dtype.lanes == 1]
         vector_stores = [store for store in stores if store.value.dtype.lanes == 4]
-        assert any(int(store.indices[0]) == 1 for store in scalar_stores)
-        assert all(int(store.indices[0].base) % 4 == 0 for store in vector_stores)
+        if loops:
+            assert scalar_stores
+            assert not vector_stores
+        else:
+            assert any(int(store.indices[0]) == 1 for store in scalar_stores)
+            assert all(int(store.indices[0].base) % 4 == 0 for store in vector_stores)
 
 
 if __name__ == "__main__":

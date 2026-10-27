@@ -83,6 +83,20 @@ PrimExpr round_ties_away_from_zero_op(PrimExpr args) {
                     call->annotations);
 }
 
+PrimExpr ppu_round_ties_away_from_zero_op(PrimExpr args) {
+  const CallNode *call = args.as<CallNode>();
+  ICHECK(call != nullptr);
+  ICHECK_EQ(call->args.size(), 1);
+  const DataType &dtype = call->dtype;
+  if (dtype.is_int() || dtype.is_uint() || dtype.is_bool()) {
+    return call->args[0];
+  }
+  ffi::String func_name =
+      dtype.is_float() && dtype.bits() == 64 ? "round" : "roundf";
+  return tirx::Call(dtype, tirx::builtin::call_pure_extern(),
+                    {StringImm(func_name), call->args[0]}, call->annotations);
+}
+
 TVM_REGISTER_OP("tl.round_ties_away_from_zero")
     .set_num_inputs(1)
     .set_attr<TCallEffectKind>("TCallEffectKind",
@@ -95,7 +109,7 @@ TVM_REGISTER_OP("tl.round_ties_away_from_zero")
     .set_attr<FLowerIntrinsic>("hip.FLowerIntrinsic",
                                round_ties_away_from_zero_op)
     .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic",
-                               round_ties_away_from_zero_op);
+                               ppu_round_ties_away_from_zero_op);
 
 } // namespace tl
 } // namespace tvm

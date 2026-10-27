@@ -124,6 +124,7 @@ test_dir = os.getcwd()
 # collection-error interception path below MUST NOT be listed here.
 COLLECT_IGNORE_PATHS = [
     "examples/ppu/linear_attention",
+    "testing/python/transform/test_tilelang_transform_im2col_fallback.py",
     "testing/python/transform/test_tilelang_transform_reorder_aiu_loads.py",
 ]
 

@@ -73,8 +73,9 @@ public:
 class ThreadAllreduceBuilder final : public StmtExprMutator {
 public:
   explicit ThreadAllreduceBuilder(const TargetNode *target,
-                                  bool is_dynamic = false)
-      : target_(target),
+                                  bool is_dynamic = false,
+                                  bool use_warp_sync_for_subword = true)
+      : target_(target), use_warp_sync_for_subword_(use_warp_sync_for_subword),
         warp_size_(
             target->GetAttr<Integer>("thread_warp_size", 1).value().IntValue()),
         max_num_threads_(target->GetAttr<Integer>("max_num_threads", -1)
@@ -720,8 +721,12 @@ private:
     // normal synchronization
     bool warp_align =
         group_extent == 1 || contiguous_reduce_extent % warp_size_ == 0;
+    bool require_block_sync =
+        !use_warp_sync_for_subword_ &&
+        std::any_of(types.begin(), types.end(),
+                    [](DataType ty) { return ty.bytes() < 4; });
     while (reduce_align > contiguous_reduce_extent ||
-           reduce_align > warp_size_ || !warp_align) {
+           reduce_align > warp_size_ || !warp_align || require_block_sync) {
       if (reduce_align == 1) {
         break;
       }
@@ -913,6 +918,7 @@ private:
 
   // The target.
   const TargetNode *target_ = nullptr;
+  bool use_warp_sync_for_subword_{true};
   // The shared scope.
   String shared_scope = "shared";
   // The warp size of the device.
@@ -940,8 +946,9 @@ private:
 namespace transform {
 using namespace tirx::transform;
 
-tvm::transform::Pass LowerThreadAllreduce() {
-  auto pass_func = [](PrimFunc f, const IRModule &m, const PassContext &ctx) {
+tvm::transform::Pass LowerThreadAllreduce(bool use_warp_sync_for_subword) {
+  auto pass_func = [use_warp_sync_for_subword](PrimFunc f, const IRModule &m,
+                                               const PassContext &ctx) {
     AllocateCollector collector;
     collector(f->body);
     bool is_dynamic = collector.dyn_shmem_allocs_.size() > 1;
@@ -951,7 +958,8 @@ tvm::transform::Pass LowerThreadAllreduce() {
     ICHECK(target.defined())
         << "LowerThreadAllreduce: Require the target attribute";
     const TargetNode *target_node = target.as<TargetNode>();
-    ThreadAllreduceBuilder thread_all_reduce(target_node, is_dynamic);
+    ThreadAllreduceBuilder thread_all_reduce(target_node, is_dynamic,
+                                             use_warp_sync_for_subword);
     n->body = thread_all_reduce(n->body);
     return f;
   };
@@ -960,8 +968,11 @@ tvm::transform::Pass LowerThreadAllreduce() {
 
 TVM_FFI_STATIC_INIT_BLOCK() {
   namespace refl = reflection;
-  refl::GlobalDef().def("tl.transform.LowerThreadAllreduce",
-                        LowerThreadAllreduce);
+  refl::GlobalDef()
+      .def("tl.transform.LowerThreadAllreduce",
+           []() { return LowerThreadAllreduce(true); })
+      .def("tl.ppu.transform.LowerThreadAllreduce",
+           []() { return LowerThreadAllreduce(false); });
 }
 
 } // namespace transform

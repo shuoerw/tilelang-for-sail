@@ -62,9 +62,7 @@ def _validate_ppu_atomic_order(operation: str, memory_order: str, scope: str) ->
     supported_orders = _PPU_ATOMIC_MEMORY_ORDERS[operation]
     if not isinstance(memory_order, str) or memory_order not in supported_orders:
         supported = ", ".join(sorted(supported_orders))
-        raise ValueError(
-            f"PPU {scope}-scope {operation} does not support memory_order={memory_order!r}; expected one of: {supported}"
-        )
+        raise ValueError(f"PPU {scope}-scope {operation} does not support memory_order={memory_order!r}; expected one of: {supported}")
     return _MEMORY_ORDER_ID_MAP[memory_order]
 
 
@@ -311,9 +309,7 @@ def atomic_add(
         if use_tma:
             raise NotImplementedError(f"PPU {scope}-scope atomic_add does not support use_tma=True")
         _validate_ppu_atomic_type("atomic_add", dst.dtype, scope)
-        memory_order_id = _validate_ppu_atomic_order(
-            "atomic_add", "relaxed" if memory_order is None else memory_order, scope
-        )
+        memory_order_id = _validate_ppu_atomic_order("atomic_add", "relaxed" if memory_order is None else memory_order, scope)
         return T.call_intrin(
             dst.dtype if return_prev else "handle",
             op.Op.get("tl.atomic_add_ret_elem_op") if return_prev else op.Op.get("tl.atomic_add_elem_op"),

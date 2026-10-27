@@ -7,14 +7,10 @@ from tvm import tirx
 from tilelang.language import common as _common
 from tilelang.language.common import *  # noqa: F401,F403
 from tilelang.language.common import __all__ as _COMMON_ALL
+from tilelang.cuda.language.tir import ptx_ldmatrix, ptx_mma, ptx_mma_sp
 from tilelang.language.annotations import annotate_l2_hit_ratio
 from tilelang.language.builtin import disable_warp_group_reg_alloc, shuffle_elect
-from tilelang.language.tir import op as _tir_op
 from tilelang.language.tir.ir import _dtype_forward
-
-ptx_ldmatrix = _dtype_forward(_tir_op.ptx_ldmatrix)
-ptx_mma = _dtype_forward(_tir_op.ptx_mma)
-ptx_mma_sp = _dtype_forward(_tir_op.ptx_mma_sp)
 
 
 def tix_ldmatrix_swzl(trans, num, src_access_ptr, dst_access_ptr, swzl_mode, trans_block=False):

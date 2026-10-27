@@ -15,6 +15,7 @@ def test_builtin_backend_modules_are_explicit():
         "rocm": (("hip",), ["tvm_ffi", "cython"]),
         "cpu": (("c", "llvm"), ["cython", "tvm_ffi"]),
         "metal": (("metal",), ["torch", "tvm_ffi"]),
+        "ppu": (("ppu",), ["tvm_ffi", "cython"]),
         "webgpu": (("webgpu",), ["tvm_ffi"]),
     }
 
@@ -66,6 +67,7 @@ def test_backend_variants_require_target_predicates():
         ("cuda", "cuda", "cuda"),
         ("hip", "rocm", "hip"),
         ("metal", "metal", "metal"),
+        ("ppu", "ppu", "ppu"),
         ("webgpu", "webgpu", "webgpu"),
     ],
 )
@@ -86,8 +88,11 @@ def test_backend_owns_compile_callbacks():
     assert "tilelang_callback_cuda_validate" in get_backend("cuda").callbacks
     assert "tilelang_callback_cuda_compile" in get_backend("cuda").callbacks
     assert "tilelang_callback_hip_compile" in get_backend("rocm").callbacks
+    assert "tilelang_callback_ppu_validate" in get_backend("ppu").callbacks
+    assert "tilelang_callback_ppu_compile" in get_backend("ppu").callbacks
     assert tvm.ffi.get_global_func("tilelang_callback_cuda_compile")
     assert tvm.ffi.get_global_func("tilelang_callback_hip_compile")
+    assert tvm.ffi.get_global_func("tilelang_callback_ppu_compile")
 
 
 def test_cutedsl_backend_reuses_cuda_pipeline():
