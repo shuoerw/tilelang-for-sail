@@ -45,6 +45,10 @@ class PPUGemmMMA(GemmBase):
     intrin_emitter_cls = PPUTensorCoreIntrinEmitter
 
     @property
+    def is_blockscaled(self) -> bool:
+        return False
+
+    @property
     def allow_f8f6f4_mixed_dtypes(self) -> bool:
         return True
 

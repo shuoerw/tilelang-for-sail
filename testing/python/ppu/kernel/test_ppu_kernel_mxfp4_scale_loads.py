@@ -250,6 +250,7 @@ def test_mxfp4_register_inputs_lowering(path):
     c = tir.decl_buffer((64, 64), "float32", name="C", scope="local.fragment")
     scales = [tir.decl_buffer((2, 64), "uint16", name=name, scope="shared") for name in ("SFA", "SFB")]
     call = T.gemm(a, b, c, transpose_B=True, scale_A=scales[0], scale_B=scales[1])
+    assert call.op.name == "tl.tileop.gemm_blockscaled"
     gemm = call.op.get_attr("TLOpBuilder")(call.args, call.annotations)
     with PPU_TARGET:
         program = gemm.lower({}, PPU_TARGET, tvm.ir.Range(0, 128), tir.Var("tx", "int32"), tir.IntImm("int32", 0))

@@ -73,6 +73,13 @@ class PassConfigKey(str, Enum):
     TL_DISABLE_WARP_SPECIALIZED = "tl.disable_warp_specialized"
     """Disable warp specialization optimization. Default: False"""
 
+    TL_ENABLE_AUTO_SCHEDULE = "tl.enable_auto_schedule"
+    """Enable Ascend auto scheduling. Default: True."""
+
+    TL_ENABLE_AUTO_WARP_SPECIALIZATION = "tl.enable_auto_warp_specialization"
+    """Name of the automatic warp-specialization scheduler to run (e.g.
+    "role_based"). Default: unset (disabled)."""
+
     TL_ENABLE_FAST_MATH = "tl.enable_fast_math"
     """
         Enable fast math optimization. Default: False
@@ -134,8 +141,7 @@ class PassConfigKey(str, Enum):
     TL_DISABLE_TMA_LOWER = "tl.disable_tma_lower"
     """Deprecated flag — prevents plain T.copy() from auto-lowering to TMA store.
 
-    Temporarily re-enabled for backward compatibility. Will be removed in
-    v0.1.10.
+    Temporarily re-enabled for backward compatibility.
     """
 
     TL_DISABLE_AIU_LOWER = "tl.disable_aiu_lower"
@@ -350,7 +356,7 @@ class PassConfigKey(str, Enum):
 
 _DEPRECATED_PASS_CONFIG_MESSAGES = {
     PassConfigKey.TL_DISABLE_TMA_LOWER.value: (
-        "`tl.disable_tma_lower` is deprecated and will be removed in v0.1.10. Use `T.copy(..., disable_tma=True)` per-copy instead."
+        "`tl.disable_tma_lower` is deprecated. Use `T.copy(..., disable_tma=True)` per-copy instead."
     ),
 }
 

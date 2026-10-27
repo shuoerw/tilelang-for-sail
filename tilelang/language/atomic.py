@@ -243,7 +243,6 @@ def atomic_add(
     value: PrimExpr,
     memory_order: str | None = None,
     return_prev: bool = False,
-    use_tma: bool = False,
     annotations: dict | None = None,
     scope: str = "device",
 ) -> PrimExpr:
@@ -257,7 +256,9 @@ def atomic_add(
         value (PrimExpr): Value to add atomically.
         memory_order (Optional[str]): Optional memory-order name controlling the atomic operation's ordering.
         return_prev (bool): If True, return the previous value; if False, return handle (default False).
-        use_tma (bool): If True, use TMA (cp.reduce) to perform the atomic add. This is available only for sm90+ (default False).
+        annotations (Optional[dict]): Extra annotations for the tile-region path. Backend
+            hints ride through this dict; the CUDA dialect (``tilelang.cuda.language.atomic_add``)
+            exposes ``use_tma`` (sm90+ TMA cp.reduce) as a typed keyword instead.
         scope (str): Memory visibility scope: ``"device"`` (default), ``"block"``, or ``"system"``.
             Block and system scope currently require the PPU backend and scalar operands.
             Both scopes support 32/64-bit integer and floating-point types, including
@@ -306,8 +307,6 @@ def atomic_add(
     if scope in ("block", "system"):
         if src_extent is not None or dst_extent is not None:
             raise NotImplementedError(f"PPU {scope} scope is supported only for scalar atomic_add")
-        if use_tma:
-            raise NotImplementedError(f"PPU {scope}-scope atomic_add does not support use_tma=True")
         _validate_ppu_atomic_type("atomic_add", dst.dtype, scope)
         memory_order_id = _validate_ppu_atomic_order("atomic_add", "relaxed" if memory_order is None else memory_order, scope)
         return T.call_intrin(
@@ -360,8 +359,6 @@ def atomic_add(
         raise NotImplementedError("return_prev is not supported for tile-region-based atomic operations")
 
     # Build annotations dict
-    if use_tma:
-        ann["use_tma"] = 1
     if memory_order is not None:
         ann["memory_order"] = _MEMORY_ORDER_ID_MAP[memory_order]
 

@@ -4,7 +4,7 @@
 
 TileLang is a concise, efficient DSL built on top of TVM for developing high-performance GPU/CPU kernels with Pythonic syntax. This repository extends TileLang with a complete PPU hardware backend, enabling it to compile and generate kernels that run natively on PPU hardware.
 
-Based on TileLang v0.1.14 (upstream commit `7e3bbf37`). For the full upstream documentation — DSL syntax, programming guides, tutorials, and benchmarks — see [README_UPSTREAM.md](./README_UPSTREAM.md) or the [TileLang GitHub](https://github.com/tile-ai/tilelang).
+Based on TileLang v0.1.15 (upstream commit `a35f8ddf`). For the full upstream documentation — DSL syntax, programming guides, tutorials, and benchmarks — see [README_UPSTREAM.md](./README_UPSTREAM.md) or the [TileLang GitHub](https://github.com/tile-ai/tilelang).
 
 ## PPU Backend Extensions and Optimizations
 
@@ -63,12 +63,12 @@ The following example defines, compiles, runs, and verifies an FP16 GEMM kernel 
 import tilelang
 import tilelang.language as T
 
+
 # @tilelang.jit(target="cuda")
 # target can be "auto", a bare kind such as "cuda", or a config dict such as
 # {"kind": "cuda", "arch": "sm_90"}.
 @tilelang.jit
-def matmul(A, B, block_M=128, block_N=128, block_K=32,
-           dtype=T.float16, accum_dtype=T.float32):
+def matmul(A, B, block_M=128, block_N=128, block_K=32, dtype=T.float16, accum_dtype=T.float32):
     M, N, K = T.const("M, N, K")
 
     A: T.Tensor((M, K), dtype)
@@ -78,7 +78,7 @@ def matmul(A, B, block_M=128, block_N=128, block_K=32,
     with T.Kernel(T.ceildiv(N, block_N), T.ceildiv(M, block_M), threads=128) as (bx, by):
         A_shared = T.alloc_shared((block_M, block_K), dtype)
         B_shared = T.alloc_shared((block_K, block_N), dtype)
-        C_local  = T.alloc_fragment((block_M, block_N), accum_dtype)
+        C_local = T.alloc_fragment((block_M, block_N), accum_dtype)
 
         T.clear(C_local)
         for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=3):
@@ -90,7 +90,9 @@ def matmul(A, B, block_M=128, block_N=128, block_K=32,
 
     return C
 
+
 import torch
+
 a = torch.randn(1024, 1024, device="cuda", dtype=torch.float16)
 b = torch.randn(1024, 1024, device="cuda", dtype=torch.float16)
 c = matmul(a, b)

@@ -4,13 +4,100 @@ from __future__ import annotations
 
 from tvm import tirx
 
+from tilelang._typing import BufferLikeType
 from tilelang.language import common as _common
 from tilelang.language.common import *  # noqa: F401,F403
 from tilelang.language.common import __all__ as _COMMON_ALL
 from tilelang.cuda.language.tir import ptx_ldmatrix, ptx_mma, ptx_mma_sp
 from tilelang.language.annotations import annotate_l2_hit_ratio
-from tilelang.language.builtin import disable_warp_group_reg_alloc, shuffle_elect
+from tilelang.language.builtin import disable_warp_group_reg_alloc, get_lane_idx, no_set_max_nreg, shuffle_elect
+from tilelang.language.gemm_op import gemm as _dense_gemm, gemm_blockscaled as _gemm_blockscaled
+from tilelang.language.math_intrinsics import __cos, __exp, __exp10, __log, __log2, __log10, __sin, __tan, fast_rcp
 from tilelang.language.tir.ir import _dtype_forward
+from tilelang.tileop.base import GemmWarpPolicy
+
+from .copy_op import copy
+from .kernel import Kernel
+
+
+def gemm_blockscaled(
+    A: BufferLikeType,
+    B: BufferLikeType,
+    C: BufferLikeType,
+    SFA: BufferLikeType,
+    SFB: BufferLikeType,
+    transpose_A: bool = False,
+    transpose_B: bool = False,
+    policy: GemmWarpPolicy = GemmWarpPolicy.Square,
+    clear_accum: bool = False,
+    *,
+    k_start: int | tirx.PrimExpr,
+    sf_a_granularity_k: int,
+    sf_b_granularity_k: int,
+    annotations: dict | None = None,
+) -> tirx.PrimExpr:
+    """PPU MXFP4 GEMM with packed E8M0 pairs covering two K32 blocks."""
+    if sf_a_granularity_k != 32 or sf_b_granularity_k != 32:
+        raise ValueError("PPU MXFP4 block scales require sf_a_granularity_k=sf_b_granularity_k=32")
+    return _gemm_blockscaled(
+        A,
+        B,
+        C,
+        SFA,
+        SFB,
+        transpose_A,
+        transpose_B,
+        policy,
+        clear_accum,
+        k_start=k_start,
+        sf_a_granularity_k=sf_a_granularity_k,
+        sf_b_granularity_k=sf_b_granularity_k,
+        annotations=annotations,
+    )
+
+
+def gemm(
+    A: BufferLikeType,
+    B: BufferLikeType,
+    C: BufferLikeType,
+    transpose_A: bool = False,
+    transpose_B: bool = False,
+    policy: GemmWarpPolicy = GemmWarpPolicy.Square,
+    clear_accum: bool = False,
+    annotations: dict | None = None,
+    *,
+    scale_A: BufferLikeType | None = None,
+    scale_B: BufferLikeType | None = None,
+) -> tirx.PrimExpr:
+    """PPU GEMM with backward-compatible packed MXFP4 scale operands."""
+    if (scale_A is None) != (scale_B is None):
+        raise ValueError("scale_A and scale_B must be provided together")
+    if scale_A is None:
+        return _dense_gemm(
+            A,
+            B,
+            C,
+            transpose_A,
+            transpose_B,
+            policy,
+            clear_accum,
+            annotations,
+        )
+    return gemm_blockscaled(
+        A,
+        B,
+        C,
+        scale_A,
+        scale_B,
+        transpose_A,
+        transpose_B,
+        policy,
+        clear_accum,
+        k_start=0,
+        sf_a_granularity_k=32,
+        sf_b_granularity_k=32,
+        annotations=annotations,
+    )
 
 
 def tix_ldmatrix_swzl(trans, num, src_access_ptr, dst_access_ptr, swzl_mode, trans_block=False):
@@ -118,8 +205,23 @@ def pdl_sync():
 __tilelang_dialect__ = "ppu"
 __all__ = (
     *_COMMON_ALL,
+    "Kernel",
+    "__cos",
+    "__exp",
+    "__exp10",
+    "__log",
+    "__log2",
+    "__log10",
+    "__sin",
+    "__tan",
     "annotate_l2_hit_ratio",
+    "copy",
+    "fast_rcp",
+    "gemm",
+    "gemm_blockscaled",
     "disable_warp_group_reg_alloc",
+    "get_lane_idx",
+    "no_set_max_nreg",
     "pdl_sync",
     "pdl_trigger",
     "ppu_aiu_load",
