@@ -236,11 +236,60 @@ struct PPUFastMathTan : public PPUMath {
 struct PPUIEEEMath {
   std::string operator()(DataType t, std::string name,
                          std::string rounding_mode) const {
+    // Mirrors CUDAIEEEMath in codegen_cuda.cc: the HGGC device functions
+    // (hgrt/hggc_device_functions.h) keep the CUDA intrinsic names, so the
+    // fp64 names strip the leading 'f' ("fadd" -> "__dadd_rn"), fp64 FMA is
+    // "__fma_rn" (not "__dfmaf_rn"), and half precision only has rn variants.
     if (t.is_float() && t.bits() == 32) {
       return "__" + name + "_" + rounding_mode;
     } else if (t.is_float() && t.bits() == 64) {
-      return "__d" + name + "_" + rounding_mode;
+      if (name == "fmaf") {
+        return "__fma_" + rounding_mode;
+      }
+      if (name == "frsqrt") {
+        LOG(FATAL) << "IEEE frsqrt is not supported for float64 on PPU. "
+                   << "Use ieee_fsqrt followed by ieee_frcp as a workaround.";
+        return "";
+      }
+      std::string base = name;
+      if (!base.empty() && base[0] == 'f') {
+        base = base.substr(1);
+      }
+      return "__d" + base + "_" + rounding_mode;
+    } else if (t.is_float16() || t.is_bfloat16()) {
+      if (rounding_mode != "rn") {
+        LOG(FATAL) << "IEEE " << name << " with rounding mode '"
+                   << rounding_mode
+                   << "' is not supported for float16/bfloat16 on PPU. "
+                   << "Only rounding mode 'rn' is available for half "
+                      "precision.";
+        return "";
+      }
+      // Overloads for the CUTLASS wrapper types live in
+      // tl_templates/ppu/common.h (TL_PATCH) and forward to the SDK
+      // __half / __ppu_bfloat16 intrinsics.
+      if (name == "fmaf") {
+        return "__hfma";
+      }
+      if (name == "fsqrt") {
+        return "hsqrt";
+      }
+      if (name == "frcp") {
+        return "hrcp";
+      }
+      if (name == "frsqrt") {
+        return "hrsqrt";
+      }
+      if (name == "fdiv") {
+        return "__hdiv";
+      }
+      std::string base = name;
+      if (!base.empty() && base[0] == 'f') {
+        base = base.substr(1);
+      }
+      return "__h" + base + "_rn";
     }
+    LOG(FATAL) << "IEEE " << name << " is not supported for dtype " << t;
     return "";
   }
 };
@@ -2244,6 +2293,26 @@ void CodeGenTileLangPPU::PrintVecStore(const BufferNode *buffer, DataType t,
  *            member stream instead).
  */
 void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
+  if (op->op.same_as(builtin::bitwise_not()) && op->dtype.is_bool()) {
+    ICHECK_EQ(op->args.size(), 1U);
+    // C++ promotes bool to int for ~, producing -1/-2 instead of a bool.
+    // Reuse logical negation, including its elementwise vector handling.
+    PrintExpr(Not(op->args[0]), os);
+    return;
+  }
+  if (op->op.same_as(builtin::bitwise_not()) &&
+      op->dtype.is_fixed_length_vector() &&
+      (op->dtype.is_int() || op->dtype.is_uint())) {
+    ICHECK_EQ(op->args.size(), 1U);
+    // PPU vector carriers have no operator~. Reuse lane-wise XOR with
+    // an all-ones mask, including the existing packed integer handling.
+    DataType scalar_type = op->dtype.element_of();
+    PrimExpr mask = scalar_type.is_uint() ? max_value(scalar_type)
+                                          : make_const(scalar_type, -1);
+    PrintVecBinaryOp("^", op->dtype, op->args[0],
+                     Broadcast(mask, op->dtype.lanes()), os);
+    return;
+  }
   auto print_extern_call_stmt = [&](std::string name, size_t start = 0,
                                     size_t end = 0) {
     // Cache context into a private ss, otherwise the let node may generate
@@ -4165,6 +4234,24 @@ void CodeGenTileLangPPU::VisitStmt_(const AllocBufferNode *op) {
   RegisterHandleType(op->buffer->data.get(), alloc_dtype);
 }
 
+void CodeGenTileLangPPU::VisitStmt_(const AssertStmtNode *op) {
+  // Every function this codegen emits is a device kernel, so a tirx AssertStmt
+  // must use the same device-legal helpers as the T.device_assert path.
+  std::string cond = PrintExpr(op->condition);
+  this->PrintIndent();
+  if (op->message_parts.empty()) {
+    stream << "device_assert(" << cond << ");\n";
+    return;
+  }
+  std::string joined_msg;
+  for (const StringImm &part : op->message_parts) {
+    joined_msg += part->value;
+  }
+  stream << "device_assert_with_msg(" << cond << ", ";
+  PrintEscapedCString(joined_msg, stream);
+  stream << ");\n";
+}
+
 void CodeGenTileLangPPU::VisitStmt_(const EvaluateNode *op) {
   if (is_const_int(op->value))
     return;
@@ -4702,49 +4789,56 @@ void CodeGenTileLangPPU::VisitExpr_(const BroadcastNode *op,
     return;
   }
 
+  // A packed 4-bit broadcast cannot use the generic make_<Type>(v, ...)
+  // fallback: lanes==4 would emit a malformed make_int16_t() call.
   if ((op->dtype.is_int() || op->dtype.is_uint()) && op->dtype.bits() == 4) {
-    bool fail = false;
     const int64_t *p = as_const_int(op->value);
-    ICHECK(p) << "BroadcastNode " << op << " value: " << op->value
-              << " is not a constant";
-    int64_t v = *p & 0xF;
 
-    if (lanes == 4) {
-      v = (v << 12) | (v << 8) | (v << 4) | v;
-      if (op->dtype.is_uint()) {
-        os << "(uint16_t)" << v;
-      } else {
-        os << "(int16_t)" << v;
-      }
-    } else {
-      v = (v << 28) | (v << 24) | (v << 20) | (v << 16) | (v << 12) | (v << 8) |
-          (v << 4) | v;
-      if (lanes == 8) {
-        if (op->dtype.is_uint()) {
-          os << "(uint)" << v;
-        } else {
-          os << "(int)" << v;
-        }
-      } else if (lanes == 16 || lanes == 32) {
-        os << "make_";
-        PrintType(op->dtype, os);
-        os << '(';
-        for (int i = 0; i < lanes / 8; ++i) {
-          if (i != 0)
-            os << ", ";
-          if (op->dtype.is_uint()) {
-            os << "(uint)" << v;
-          } else {
-            os << "(int)" << v;
-          }
-        }
-        os << ')';
-      } else {
-        fail = true;
-      }
+    // Materialize non-constants once so side effects are not duplicated.
+    std::string scalar_value;
+    if (!p) {
+      scalar_value = SSAGetID(PrintExpr(op->value), op->value.dtype());
     }
 
-    if (!fail) {
+    auto emit_packed_field = [&](int nibbles_per_field) {
+      if (p) {
+        int64_t value = *p & 0xF;
+        int64_t packed = 0;
+        for (int i = 0; i < nibbles_per_field; ++i) {
+          packed |= value << (i * 4);
+        }
+        os << packed;
+      } else {
+        os << '(';
+        for (int i = 0; i < nibbles_per_field; ++i) {
+          if (i != 0)
+            os << " | ";
+          os << "((static_cast<unsigned int>(" << scalar_value
+             << ") & 0x0fu) << " << (i * 4) << ")";
+        }
+        os << ')';
+      }
+    };
+
+    if (lanes == 4) {
+      os << (op->dtype.is_uint() ? "(uint16_t)" : "(int16_t)");
+      emit_packed_field(4);
+      return;
+    } else if (lanes == 8) {
+      os << (op->dtype.is_uint() ? "(uint)" : "(int)");
+      emit_packed_field(8);
+      return;
+    } else if (lanes == 16 || lanes == 32) {
+      os << "make_";
+      PrintType(op->dtype, os);
+      os << '(';
+      for (int i = 0; i < lanes / 8; ++i) {
+        if (i != 0)
+          os << ", ";
+        os << (op->dtype.is_uint() ? "(uint)" : "(int)");
+        emit_packed_field(8);
+      }
+      os << ')';
       return;
     }
   }
@@ -4865,6 +4959,17 @@ inline void PrintConst(const FloatImmNode *op, std::ostream &os,
   }
   // Type code is kFloat8_e5m2 or kE4M4Float
   if (op->dtype.is_float8() || op->dtype.is_float4()) {
+    // e5m2 inf/NaN have no float-literal spelling; emit the bit pattern.
+    if (op->dtype.is_float8_e5m2() && std::isinf(op->value)) {
+      p->PrintType(op->dtype, os);
+      os << "::bitcast(" << (op->value < 0 ? "0xfc" : "0x7c") << ")";
+      return;
+    }
+    if (op->dtype.is_float8_e5m2() && std::isnan(op->value)) {
+      p->PrintType(op->dtype, os);
+      os << "::bitcast(0x7e)";
+      return;
+    }
     p->PrintType(op->dtype, os);
     os << '(' << FlexibleHexFormat(op->value) << 'f';
     os << "/*" << std::scientific << op->value << "*/";

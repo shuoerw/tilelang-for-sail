@@ -9,8 +9,6 @@
 #define hsqrt cutlass::fast_sqrt
 #define hsin cutlass::fast_sin
 #define hcos cutlass::fast_cos
-#define htanh cutlass::fast_tanh
-#define hpow powf
 
 namespace cutlass {
 // Mirror cutlass's own half_t fast_exp (fast_math.h): route through float.
@@ -18,6 +16,13 @@ namespace cutlass {
 // same cutlass::fast_exp and x is already bfloat16_t.
 TL_DEVICE
 bfloat16_t fast_exp(bfloat16_t x) { return bfloat16_t(fast_exp(float(x))); }
+
+// Same routing for fast_sqrt: the hsqrt macro below redirects every `hsqrt`
+// call site (including the IEEE fsqrt lowering) to cutlass::fast_sqrt, which
+// otherwise only resolves for float/double/half_t and leaves bfloat16_t
+// results unassignable.
+TL_DEVICE
+bfloat16_t fast_sqrt(bfloat16_t x) { return bfloat16_t(fast_sqrt(float(x))); }
 } // namespace cutlass
 
 namespace tl {

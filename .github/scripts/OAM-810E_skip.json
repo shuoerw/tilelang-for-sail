@@ -904,5 +904,1451 @@
     "test_filter": "test_tmem_outer_m_tiles_allocate_physical_columns[float32-128]",
     "extra_args": [],
     "reason": "TMEM lowering requires the CUDA backend, which is not included in the PPU build."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_parallel.py",
+    "test_filter": "test_parallel_let_indices[1-2-2-0-False]",
+    "extra_args": [],
+    "reason": "CUDA codegen is not compiled into the PPU build (AnnotateDeviceBoundTmaCopies missing); PPU port lives in testing/python/ppu/language/test_ppu_parallel_let_indices.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_parallel.py",
+    "test_filter": "test_parallel_let_indices[1-2-2-0-True]",
+    "extra_args": [],
+    "reason": "CUDA codegen is not compiled into the PPU build (AnnotateDeviceBoundTmaCopies missing); PPU port lives in testing/python/ppu/language/test_ppu_parallel_let_indices.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_parallel.py",
+    "test_filter": "test_parallel_let_indices[2-8-4-0-False]",
+    "extra_args": [],
+    "reason": "CUDA codegen is not compiled into the PPU build (AnnotateDeviceBoundTmaCopies missing); PPU port lives in testing/python/ppu/language/test_ppu_parallel_let_indices.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_parallel.py",
+    "test_filter": "test_parallel_let_indices[2-8-4-0-True]",
+    "extra_args": [],
+    "reason": "CUDA codegen is not compiled into the PPU build (AnnotateDeviceBoundTmaCopies missing); PPU port lives in testing/python/ppu/language/test_ppu_parallel_let_indices.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_parallel.py",
+    "test_filter": "test_parallel_let_indices[3-5-8-0-False]",
+    "extra_args": [],
+    "reason": "CUDA codegen is not compiled into the PPU build (AnnotateDeviceBoundTmaCopies missing); PPU port lives in testing/python/ppu/language/test_ppu_parallel_let_indices.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_parallel.py",
+    "test_filter": "test_parallel_let_indices[3-5-8-0-True]",
+    "extra_args": [],
+    "reason": "CUDA codegen is not compiled into the PPU build (AnnotateDeviceBoundTmaCopies missing); PPU port lives in testing/python/ppu/language/test_ppu_parallel_let_indices.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_parallel.py",
+    "test_filter": "test_parallel_let_indices[2-8-8-4-False]",
+    "extra_args": [],
+    "reason": "CUDA codegen is not compiled into the PPU build (AnnotateDeviceBoundTmaCopies missing); PPU port lives in testing/python/ppu/language/test_ppu_parallel_let_indices.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_parallel.py",
+    "test_filter": "test_parallel_let_indices[2-8-8-4-True]",
+    "extra_args": [],
+    "reason": "CUDA codegen is not compiled into the PPU build (AnnotateDeviceBoundTmaCopies missing); PPU port lives in testing/python/ppu/language/test_ppu_parallel_let_indices.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_dialect.py",
+    "test_filter": "test_ppu_language_composes_common_and_supported_intrinsics",
+    "extra_args": [],
+    "reason": "Assertion predates the v0.1.15 dialect copy-hint refactor (PPU T.copy is a dialect-owned shadow); runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_dialect.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_atomic_scope_uses_shared_op[add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_atomic_scope_uses_shared_op[add-device]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_atomic_scope_uses_shared_op[add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_atomic_scope_uses_shared_op[add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_atomic_scope_uses_shared_op[add_ret-device]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_atomic_scope_uses_shared_op[add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_backend_wrappers_delegate_scope_validation[pipeline-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_backend_wrappers_delegate_scope_validation[pipeline-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_backend_wrappers_delegate_scope_validation[codegen-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_backend_wrappers_delegate_scope_validation[codegen-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_backend_wrappers_delegate_scope_validation[codegen_without_compile-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_backend_wrappers_delegate_scope_validation[codegen_without_compile-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[cuda-block-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[cuda-block-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[cuda-system-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[cuda-system-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[hip-block-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[hip-block-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[hip-system-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[hip-system-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[cutedsl-block-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[cutedsl-block-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[cutedsl-system-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[cutedsl-system-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[c-block-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[c-block-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[c-system-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[c-system-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[metal-block-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[metal-block-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[metal-system-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[metal-system-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[llvm-block-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[llvm-block-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[llvm-system-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_rejects_unsupported_atomic_scope[llvm-system-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[ppu-False-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[ppu-False-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[ppu-True-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[ppu-True-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[cuda-False-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[cuda-False-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[cuda-True-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[cuda-True-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[hip-False-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[hip-False-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[hip-True-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[hip-True-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[cutedsl-False-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[cutedsl-False-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[cutedsl-True-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_native_codegen_device_scope[cutedsl-True-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[vectorize-rank-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[vectorize-rank-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[vectorize-1-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[vectorize-1-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[vectorize-dynamic-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[vectorize-dynamic-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[ppu-rank-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[ppu-rank-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[ppu-1-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[ppu-1-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[ppu-dynamic-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[ppu-dynamic-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cuda-rank-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cuda-rank-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cuda-1-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cuda-1-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cuda-dynamic-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cuda-dynamic-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[hip-rank-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[hip-rank-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[hip-1-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[hip-1-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[hip-dynamic-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[hip-dynamic-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cutedsl-rank-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cutedsl-rank-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cutedsl-1-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cutedsl-1-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cutedsl-dynamic-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[cutedsl-dynamic-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[c-rank-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[c-rank-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[c-1-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[c-1-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[c-dynamic-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[c-dynamic-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[metal-rank-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[metal-rank-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[metal-1-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[metal-1-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[metal-dynamic-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_scope_validation[metal-dynamic-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[vectorize-empty-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[vectorize-empty-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[vectorize-too_few-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[vectorize-too_few-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[vectorize-too_many-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[vectorize-too_many-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[ppu-empty-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[ppu-empty-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[ppu-too_few-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[ppu-too_few-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[ppu-too_many-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[ppu-too_many-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cuda-empty-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cuda-empty-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cuda-too_few-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cuda-too_few-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cuda-too_many-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cuda-too_many-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[hip-empty-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[hip-empty-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[hip-too_few-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[hip-too_few-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[hip-too_many-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[hip-too_many-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cutedsl-empty-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cutedsl-empty-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cutedsl-too_few-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cutedsl-too_few-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cutedsl-too_many-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[cutedsl-too_many-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[c-empty-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[c-empty-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[c-too_few-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[c-too_few-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[c-too_many-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[c-too_many-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[metal-empty-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[metal-empty-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[metal-too_few-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[metal-too_few-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[metal-too_many-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_raw_atomic_arity_validation[metal-too_many-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_vectorization_preserves_atomic_scope[add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_vectorization_preserves_atomic_scope[add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_vectorization_preserves_atomic_scope[add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_vectorization_preserves_atomic_scope[add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[int32-block-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[int32-block-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[int32-system-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[int32-system-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[uint32-block-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[uint32-block-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[uint32-system-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[uint32-system-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[int64-block-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[int64-block-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[int64-system-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[int64-system-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[uint64-block-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[uint64-block-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[uint64-system-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[uint64-system-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[float32-block-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[float32-block-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[float32-system-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[float32-system-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[float64-block-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[float64-block-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[float64-system-False]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_defaults_and_return_value[float64-system-True]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_rejects_unsupported_arguments[block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_rejects_unsupported_arguments[system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_block_atomic_add_rejects_subword_types[int8]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_block_atomic_add_rejects_subword_types[int16]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_block_atomic_add_rejects_subword_types[float16]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_block_atomic_add_rejects_subword_types[bfloat16]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_block_atomic_add_rejects_subword_types[bool]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_return_value_vectorization[block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_add_return_value_vectorization[system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[int8-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[int8-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[uint8-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[uint8-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[int16-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[int16-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[uint16-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[uint16-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[float16-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[float16-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[bfloat16-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[bfloat16-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[bool-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_rejects_subword_types[bool-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[int32-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[int32-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[uint32-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[uint32-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[int64-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[int64-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[uint64-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[uint64-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[float32-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[float32-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[float64-add]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_system_atomic_accepts_supported_types[float64-add_ret]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[relaxed-add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[relaxed-add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[relaxed-add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[relaxed-add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[consume-add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[consume-add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[consume-add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[consume-add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[acquire-add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[acquire-add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[acquire-add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[acquire-add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[release-add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[release-add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[release-add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[release-add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[acq_rel-add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[acq_rel-add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[acq_rel-add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[acq_rel-add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[seq_cst-add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[seq_cst-add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[seq_cst-add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[seq_cst-add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[invalid-add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[invalid-add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[invalid-add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[invalid-add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[6-add-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[6-add-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[6-add_ret-block]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_atomic_scope.py",
+    "test_filter": "test_scoped_atomic_operation_orders[6-add_ret-system]",
+    "extra_args": [],
+    "reason": "Scoped atomics go through tilelang.language, whose default dialect re-exports the CUDA atomic_add wrapper that does not forward scope; runnable PPU copy lives in testing/python/ppu/language/test_ppu_language_atomic_scope.py."
+  },
+  {
+    "file_path": "testing/python/language/test_tilelang_language_func_attrs.py",
+    "test_filter": "test_out_idx_via_attr_lazy",
+    "extra_args": [],
+    "reason": "get_exportable_executable().jit() lazy-JIT entry is missing on the PPU execution backend."
   }
 ]
