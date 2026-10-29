@@ -4168,7 +4168,15 @@ void CodeGenTileLangPPU::VisitStmt_(const AllocBufferNode *op) {
         (alloc_dtype == DataType::Int(4) || alloc_dtype == DataType::UInt(4)) &&
         alloc_dtype.is_scalar() && scope == "local";
     if (!is_fp4_scalar_local && !is_int4_scalar_local) {
-      PrintStorageScope(scope, stream);
+      auto alignment = smem_alignment_map_.find(op->buffer->data->name_hint);
+      if (scope == "shared" && alignment != smem_alignment_map_.end()) {
+        stream << "__shared__ __align__("
+               << std::max({barrier_alignment_bytes_, aiu_smem_alignment_,
+                            static_cast<int>((*alignment).second->value)})
+               << ") ";
+      } else {
+        PrintStorageScope(scope, stream);
+      }
       if (is_float4_unpacked_shared) {
         stream << "uint8_t";
       } else {
@@ -5255,6 +5263,8 @@ void CodeGenTileLangPPU::AddFunction(const GlobalVar &gvar, const PrimFunc &f) {
   CodeGenC::DeclareFunction(gvar, f);
   // clear previous generated state.
   this->InitFuncState(f);
+  smem_alignment_map_ = f->GetAttr<Map<String, IntImm>>(tl::kSmemAlignmentMap)
+                            .value_or(Map<String, IntImm>());
   aiu_smem_alignment_ = 0;
   tirx::PostOrderVisit(f->body, [this](const ObjectRef &node) {
     if (const auto *call = node.as<CallNode>();

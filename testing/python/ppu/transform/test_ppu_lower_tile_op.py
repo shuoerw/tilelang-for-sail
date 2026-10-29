@@ -6,6 +6,7 @@ import tilelang.ppu.language as T
 import tilelang.ppu.transform
 import tilelang.testing
 from tilelang import tvm
+from tilelang.layout import make_full_bank_swizzled_layout, make_half_bank_swizzled_layout
 from tilelang.ppu.intrinsics.macro.mma_macro_generator import PPUTensorCoreIntrinEmitter
 from tilelang.ppu.intrinsics.macro.mma_sp_macro_generator import PPUSparseTensorCoreIntrinEmitter
 from tvm.tirx.stmt_functor import post_order_visit
@@ -21,6 +22,40 @@ def _count_calls(func: tvm.tirx.PrimFunc):
 
     post_order_visit(func.body, _visit)
     return counts
+
+
+@pytest.mark.parametrize("row_bytes", [64, 128])
+@pytest.mark.parametrize("existing_alignment", [None, 16, 64, 256])
+def test_ppu_lower_tile_op_preserves_smem_alignment(row_bytes, existing_alignment):
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+    k = row_bytes // 2
+    layout = make_full_bank_swizzled_layout if row_bytes == 128 else make_half_bank_swizzled_layout
+
+    @T.prim_func
+    def main():
+        with T.Kernel(1, threads=128):
+            a_pad = T.alloc_shared((16,), "uint8")
+            b_A = T.alloc_shared((64, k), "bfloat16")
+            c_B = T.alloc_shared((64, k), "bfloat16")
+            acc = T.alloc_fragment((64, 64), "float32")
+            T.annotate_layout({b_A: layout(b_A), c_B: layout(c_B)})
+            T.clear(a_pad)
+            T.clear(acc)
+            T.gemm(b_A, c_B, acc, transpose_B=True)
+
+    if existing_alignment is not None:
+        main = main.with_attr("tl.smem_alignment_map", {"a_pad": 256, "b_A": existing_alignment})
+    with target:
+        mod = tvm.tirx.transform.BindTarget(target)(tvm.IRModule.from_expr(main))
+        mod = tilelang.transform.MaterializeKernelLaunch()(mod)
+        mod = tilelang.ppu.transform.LayoutInference()(mod)
+        lowered = tilelang.ppu.transform.LowerTileOp()(mod)["main"]
+
+    assert _count_calls(lowered).get("tl.tix_ldmatrix_swzl", 0) > 0
+    expected = {"b_A": max(existing_alignment or 0, row_bytes), "c_B": row_bytes}
+    if existing_alignment is not None:
+        expected["a_pad"] = 256
+    assert {str(key): int(value) for key, value in lowered.attrs["tl.smem_alignment_map"].items()} == expected
 
 
 def _vectorized_cp_async_element_counts(func: tvm.tirx.PrimFunc):

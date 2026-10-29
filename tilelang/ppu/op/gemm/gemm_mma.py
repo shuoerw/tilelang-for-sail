@@ -188,6 +188,9 @@ class PPUGemmMMA(GemmBase):
             ppu_arch = 10
         a_from_gemm_c = self._is_chained_rs_gemm(ppu_arch)
         mma_emitter = self._make_mma_emitter(target, thread_nums, thread_index=local_thread_index)
+        # SWZL is a full-warp load; select it from the final inferred layouts.
+        if arith.Analyzer().can_prove(thread_bounds.min % 32 == 0):
+            mma_emitter.layout_map = layout_map
 
         a_dtype = self.a_dtype
         b_dtype = self.b_dtype

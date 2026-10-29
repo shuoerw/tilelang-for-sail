@@ -226,6 +226,8 @@ public:
     auto target = f->GetAttr<Target>(tvm::attr::kTarget);
     ICHECK(target.defined()) << "LowerTileOpPass: Require the target attribute";
     substituter.target_ = target.value();
+    substituter.smem_alignment_map_ =
+        f->GetAttr<Map<String, IntImm>>(kSmemAlignmentMap).value_or({});
     PrimFuncNode *fptr = f.CopyOnWrite();
     fptr->body = substituter.VisitStmt(f->body);
     fptr->body =
@@ -730,6 +732,15 @@ private:
     return Optional<PrimExpr>();
   }
 
+  void RequireSmemAlignment(const Var &data_var, int alignment) {
+    String key = data_var->name_hint;
+    auto it = smem_alignment_map_.find(key);
+    int64_t prev = it != smem_alignment_map_.end() ? (*it).second->value : 0;
+    if (alignment > prev) {
+      smem_alignment_map_.Set(key, IntImm(DataType::Int(32), alignment));
+    }
+  }
+
   Optional<Buffer> FindRemapBuffer(const Buffer &buffer) const {
     if (buffer_remap_.count(buffer)) {
       return buffer;
@@ -848,6 +859,18 @@ private:
       Call access_ptr_call = Downcast<Call>(access_ptr);
 
       if (access_ptr_call->op.same_as(tl::access_ptr())) {
+        // SWZL interprets the shared address in 64B/128B swizzle blocks.
+        // Preserve that base alignment when allocations are merged, even
+        // when this function has no AIU copies.
+        Optional<PrimExpr> resolved =
+            ResolveBufferLoad(access_ptr_call->args[0]);
+        ICHECK(resolved.defined());
+        Buffer buffer = Downcast<BufferLoad>(resolved.value())->buffer;
+        if (auto key = FindRemapBuffer(buffer)) {
+          buffer = buffer_remap_[key.value()];
+        }
+        RequireSmemAlignment(buffer->data,
+                             is_const_int(call->args[4], 1) ? 64 : 128);
         use_warp_binding_ = true;
         auto new_access_ptr =
             HandleAccessPtrAndOffset(access_ptr, std::nullopt, call->dtype);
@@ -1121,13 +1144,7 @@ private:
 
     RequireSmemAlignmentCallback require_smem_alignment_callback =
         [this](Var data_var, int alignment) {
-          String key = data_var->name_hint;
-          auto it = smem_alignment_map_.find(key);
-          int64_t prev =
-              it != smem_alignment_map_.end() ? (*it).second->value : 0;
-          if (alignment > prev) {
-            smem_alignment_map_.Set(key, IntImm(DataType::Int(32), alignment));
-          }
+          RequireSmemAlignment(data_var, alignment);
         };
 
     LowerArgs lower_args;

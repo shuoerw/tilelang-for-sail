@@ -9,6 +9,7 @@ from tvm.ir import Range
 from tvm.tirx import PrimExpr, IndexMap, Buffer, BufferRegion, BufferLoad
 from tvm.tirx import FloorMod, FloorDiv
 from tilelang import tvm as tvm
+from tilelang import _ffi_api
 from tvm.runtime import convert
 from ..layout.utils import (
     mma_store_index_map,
@@ -934,7 +935,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
     from the base class unchanged.
     """
 
-    def __init__(self, *args, ppu_arch=None, **kwargs):
+    def __init__(self, *args, ppu_arch=None, layout_map=None, **kwargs):
         if ppu_arch is None:
             from tilelang.contrib import hgcc
 
@@ -942,6 +943,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
             arch_str = hgcc.get_target_arch(compute_version)
             ppu_arch = int(arch_str.split("_")[-1].rstrip("af"))
         self.ppu_arch = ppu_arch
+        self.layout_map = layout_map
         super().__init__(*args, **kwargs)
 
     def _initialize_mma_prefix(self, k_dim: int = 16):
@@ -1000,19 +1002,21 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         config_disabled = pass_ctx.config.get(PassConfigKey.TL_DISABLE_LDMAT_SWZL.value, False)
         return config_disabled or self.ppu_arch != 15
 
-    def _ldmat_swzl_mode(self, stride, dtype: str) -> tuple[int, bool]:
-        """Determine the swizzle mode and whether swizzle is supported for ``stride``.
-
-        The mode is decided by the shared-memory row width in bytes:
-        64 bytes -> mode 1 (half-bank), multiples of 128 bytes -> mode 0 (full-bank).
-        """
-        value = stride if isinstance(stride, int) else getattr(stride, "value", None)
-        if value is None:
+    def _ldmat_swzl_mode(self, region: BufferRegion) -> tuple[int, bool]:
+        """Match Copy::LowerLDSM's shared-layout and x4 shape requirements."""
+        buffer = region.buffer
+        layout = self.layout_map.get(buffer) if self.layout_map is not None else None
+        if layout is None or len(buffer.shape) < 2:
             return 0, False
-        bytes_per_row = value * DataType(dtype).bits // 8
-        if bytes_per_row == 64:
+        rows = getattr(buffer.shape[-2], "value", None)
+        columns = getattr(region.region[-1].extent, "value", None)
+        if rows is None or rows % 16 != 0 or columns is None or columns * DataType(buffer.dtype).bits < 256:
+            return 0, False
+        # Reuse the C++ classifier used by Copy; row width alone is insufficient.
+        mode = _ffi_api.detect_swizzle_mode(layout, buffer)
+        if mode.is_swizzle_64b():
             return 1, True
-        if bytes_per_row % 128 == 0:
+        if mode.is_swizzle_128b():
             return 0, True
         return 0, False
 
@@ -1047,7 +1051,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         A_base1 = A_region.region[-1].min
         A_other = [r.min for r in A_region.region[:-2]]
 
-        swzl_mode, swzl_supported = self._ldmat_swzl_mode(A_buf.shape[-1], self.a_dtype)
+        swzl_mode, swzl_supported = self._ldmat_swzl_mode(A_region)
         disable_ldmat_swzl = self._disable_ldmat_swzl() or not swzl_supported
         if a_bits == 4:
             access_extent = 32
@@ -1212,7 +1216,7 @@ class PPUTensorCoreIntrinEmitter(TensorCoreIntrinEmitter):
         B_other = [r.min for r in B_region.region[:-2]]
         replicate_b = self.n_dim == 16
 
-        swzl_mode, swzl_supported = self._ldmat_swzl_mode(B_buf.shape[-1], self.b_dtype)
+        swzl_mode, swzl_supported = self._ldmat_swzl_mode(B_region)
         disable_ldmat_swzl = self._disable_ldmat_swzl() or not swzl_supported
 
         @T.macro

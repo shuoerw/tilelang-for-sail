@@ -95,6 +95,8 @@ private:
 
   // Shared allocations in AIU kernels require at least 128-byte alignment.
   int aiu_smem_alignment_{0};
+  // Per-allocation shared-memory alignment requirements.
+  ffi::Map<ffi::String, IntImm> smem_alignment_map_;
 
   // Global acrand state
   std::string acrand_random_generator_state;
