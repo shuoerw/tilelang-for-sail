@@ -56,7 +56,9 @@ def _make_raw_aiu_load(buf, extra_var=None, *, compiler_managed=False):
         args.append(extra_var if i == 1 and extra_var is not None else tir.IntImm("int32", 0))
     args.extend([tir.IntImm("int32", 1), tir.IntImm("int32", 128)])
     call = tir.Call(
-        "handle", tir.op.Op.get("tl.ppu_aiu_load"), args,
+        "handle",
+        tir.op.Op.get("tl.ppu_aiu_load"),
+        args,
         annotations={"no_implicit_async_commit_wait": tir.IntImm("int32", int(not compiler_managed))},
     )
     return tir.Evaluate(call)
