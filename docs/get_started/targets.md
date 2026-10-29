@@ -160,8 +160,16 @@ For example, to omit the hint for one load:
 
 ```python
 T.ppu_aiu_load(
-    smem_ptr, gmem_ptr, dim_c, dim_w, cube_c, cube_w,
-    stride_w_bytes, start_c, start_w, swzl_mode,
+    smem_ptr,
+    gmem_ptr,
+    dim_c,
+    dim_w,
+    cube_c,
+    cube_w,
+    stride_w_bytes,
+    start_c,
+    start_w,
+    swzl_mode,
     prefetch_bytes=0,
 )
 ```

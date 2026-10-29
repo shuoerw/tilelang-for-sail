@@ -1478,12 +1478,12 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
           : SeqStmt(Array<Stmt>(load_stmts.begin(), load_stmts.end()));
   if (!no_implicit_commit_wait && load_stmts.size() > 1) {
     aiu_result = AttrStmt(make_zero(DataType::Int(32)),
-                         s_tir::attr::async_commit_queue_scope,
-                         IntImm(DataType::Int(32), 0), aiu_result);
+                          s_tir::attr::async_commit_queue_scope,
+                          IntImm(DataType::Int(32), 0), aiu_result);
   }
   return IfThenElse(
       LT(warp_id, IntImm(DataType::Int(32),
-                        partition->row_splits * partition->col_splits)),
+                         partition->row_splits * partition->col_splits)),
       aiu_result);
 }
 

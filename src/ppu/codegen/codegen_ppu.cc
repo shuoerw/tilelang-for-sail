@@ -2496,7 +2496,8 @@ void CodeGenTileLangPPU::VisitExpr_(const CallNode *op, std::ostream &os) {
            "ppu0015+ TMA.";
   } else if (op->op.same_as(tl::ppu_aiu_load())) {
     ICHECK(op->args.size() >= 10U && op->args.size() <= 12U)
-        << "ppu_aiu_load expects 10, 11, or 12 args (smem, global, dim_c, dim_w, "
+        << "ppu_aiu_load expects 10, 11, or 12 args (smem, global, dim_c, "
+           "dim_w, "
            "cube_c, cube_w, stride_w_bytes, start_c, start_w, swzl_mode, "
            "[is_swizzle], [prefetch_bytes]), got "
         << op->args.size();
