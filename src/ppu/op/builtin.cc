@@ -6,6 +6,7 @@
 #include "builtin.h"
 
 #include <tvm/ir/transform.h>
+#include <tvm/tirx/op_attr_types.h>
 
 #include "op/builtin_registry.h"
 
@@ -16,6 +17,9 @@ using namespace tirx;
 
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableAIULower, Bool);
 TVM_REGISTER_PASS_CONFIG_OPTION(kDisableLdmatSwzl, Bool);
+
+TVM_REGISTER_OP("tl.clamp")
+    .set_attr<FLowerIntrinsic>("ppu.FLowerIntrinsic", LowerClamp);
 
 TIR_DEFINE_TL_BUILTIN(ppu_aiu_load)
     .set_num_inputs(-1)

@@ -2,7 +2,7 @@ import pytest
 import torch
 import tilelang
 import tilelang.testing
-import tilelang.language as T
+import tilelang.ppu.language as T
 from tilelang import tvm
 
 

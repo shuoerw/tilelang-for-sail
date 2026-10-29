@@ -1,19 +1,13 @@
+import torch
+
 import tilelang
 import tilelang.ppu.language as T
 import tilelang.testing
 
 
 @tilelang.testing.requires_ppu
-def test_copy_and_async_copy_gemm_codegen_equivalent_sm80():
-    """For SM80, T.copy(global->shared) may lower to cp.async.
-
-    This test checks that the explicit form:
-      T.async_copy(...) + T.ptx_wait_group(0)
-    produces identical CUDA source as:
-      T.copy(...)
-
-    This is intentionally a codegen equivalence test (not a perf test).
-    """
+def test_copy_and_async_copy_gemm_runtime_equivalent_ppu():
+    """Check explicit async copy and planned T.copy agree on PPU."""
 
     M = 256
     N = 256
@@ -82,14 +76,20 @@ def test_copy_and_async_copy_gemm_codegen_equivalent_sm80():
 
     sync_matmul_relu = matmul_relu_kernel
 
-    # Compile both and compare the generated CUDA source.
-    async_kernel = tilelang.compile(async_matmul_relu, target="cuda")
-    sync_kernel = tilelang.compile(sync_matmul_relu, target="cuda")
+    async_kernel = tilelang.compile(async_matmul_relu, target="ppu")
+    sync_kernel = tilelang.compile(sync_matmul_relu, target="ppu")
 
-    async_src = async_kernel.get_kernel_source()
-    sync_src = sync_kernel.get_kernel_source()
+    torch.manual_seed(0)
+    a = torch.randn((M, K), device="cuda", dtype=torch.float16)
+    b = torch.randn((K, N), device="cuda", dtype=torch.float16)
+    async_result = torch.empty((M, N), device="cuda", dtype=torch.float16)
+    sync_result = torch.empty_like(async_result)
+    async_kernel(a, b, async_result)
+    sync_kernel(a, b, sync_result)
 
-    assert async_src == sync_src
+    expected = torch.relu(a.float() @ b.float()).half()
+    torch.testing.assert_close(async_result, sync_result, atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(async_result, expected, atol=5e-2, rtol=1e-2)
 
 
 if __name__ == "__main__":

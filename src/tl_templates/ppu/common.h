@@ -93,8 +93,140 @@ TL_PATCH TL_DEVICE bfloat16_t hrsqrt(const bfloat16_t x) {
   return bfloat16_t(hrsqrt(x.to_ppu_bfloat16()));
 }
 
+// IEEE-rounding half intrinsics emitted by PPUIEEEMath. The SDK declares
+// them for __half / __ppu_bfloat16 only, so forward from the CUTLASS
+// wrapper types.
+TL_PATCH TL_DEVICE half_t __hadd_rn(const half_t x, const half_t y) {
+  return half_t(__hadd_rn(x.to_half(), y.to_half()));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t __hadd_rn(const bfloat16_t x,
+                                        const bfloat16_t y) {
+  return bfloat16_t(__hadd_rn(x.to_ppu_bfloat16(), y.to_ppu_bfloat16()));
+}
+
+TL_PATCH TL_DEVICE half_t __hsub_rn(const half_t x, const half_t y) {
+  return half_t(__hsub_rn(x.to_half(), y.to_half()));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t __hsub_rn(const bfloat16_t x,
+                                        const bfloat16_t y) {
+  return bfloat16_t(__hsub_rn(x.to_ppu_bfloat16(), y.to_ppu_bfloat16()));
+}
+
+TL_PATCH TL_DEVICE half_t __hmul_rn(const half_t x, const half_t y) {
+  return half_t(__hmul_rn(x.to_half(), y.to_half()));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t __hmul_rn(const bfloat16_t x,
+                                        const bfloat16_t y) {
+  return bfloat16_t(__hmul_rn(x.to_ppu_bfloat16(), y.to_ppu_bfloat16()));
+}
+
+TL_PATCH TL_DEVICE half_t __hdiv(const half_t x, const half_t y) {
+  return half_t(__hdiv(x.to_half(), y.to_half()));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t __hdiv(const bfloat16_t x, const bfloat16_t y) {
+  return bfloat16_t(__hdiv(x.to_ppu_bfloat16(), y.to_ppu_bfloat16()));
+}
+
+TL_PATCH TL_DEVICE half_t __hfma(const half_t x, const half_t y,
+                                 const half_t z) {
+  return half_t(__hfma(x.to_half(), y.to_half(), z.to_half()));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t __hfma(const bfloat16_t x, const bfloat16_t y,
+                                     const bfloat16_t z) {
+  return bfloat16_t(
+      __hfma(x.to_ppu_bfloat16(), y.to_ppu_bfloat16(), z.to_ppu_bfloat16()));
+}
+
+TL_PATCH TL_DEVICE half_t hsqrt(const half_t x) {
+  return half_t(hsqrt(x.to_half()));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hsqrt(const bfloat16_t x) {
+  return bfloat16_t(hsqrt(x.to_ppu_bfloat16()));
+}
+
+TL_PATCH TL_DEVICE half_t hrcp(const half_t x) {
+  return half_t(hrcp(x.to_half()));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hrcp(const bfloat16_t x) {
+  return bfloat16_t(hrcp(x.to_ppu_bfloat16()));
+}
+
 TL_PATCH TL_DEVICE bfloat16_t hexp(const bfloat16_t x) {
   return bfloat16_t(hexp(x.to_ppu_bfloat16()));
+}
+
+// 16-bit lowering emits these h* names, but PPU has no overload of them
+// that accepts the CUTLASS wrapper types. Evaluate in float32 and convert
+// the result back to the source type.
+TL_PATCH TL_DEVICE half_t hsinh(const half_t x) {
+  return half_t(sinhf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hsinh(const bfloat16_t x) {
+  return bfloat16_t(sinhf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hcosh(const half_t x) {
+  return half_t(coshf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hcosh(const bfloat16_t x) {
+  return bfloat16_t(coshf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t htanh(const half_t x) {
+  return half_t(tanhf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t htanh(const bfloat16_t x) {
+  return bfloat16_t(tanhf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hatan(const half_t x) {
+  return half_t(atanf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hatan(const bfloat16_t x) {
+  return bfloat16_t(atanf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t herf(const half_t x) {
+  return half_t(erff(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t herf(const bfloat16_t x) {
+  return bfloat16_t(erff(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hnearbyint(const half_t x) {
+  return half_t(nearbyintf(float(x)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hnearbyint(const bfloat16_t x) {
+  return bfloat16_t(nearbyintf(float(x)));
+}
+
+TL_PATCH TL_DEVICE half_t hpow(const half_t x, const half_t y) {
+  return half_t(powf(float(x), float(y)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hpow(const bfloat16_t x, const bfloat16_t y) {
+  return bfloat16_t(powf(float(x), float(y)));
+}
+
+TL_PATCH TL_DEVICE half_t hfmod(const half_t x, const half_t y) {
+  return half_t(fmodf(float(x), float(y)));
+}
+
+TL_PATCH TL_DEVICE bfloat16_t hfmod(const bfloat16_t x, const bfloat16_t y) {
+  return bfloat16_t(fmodf(float(x), float(y)));
 }
 
 // Pack two half values.

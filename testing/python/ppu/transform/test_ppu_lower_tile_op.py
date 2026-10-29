@@ -195,6 +195,27 @@ def _lower_pipeline_managed_chunk_permuted_1d_layout_copy():
         return tilelang.ppu.transform.LowerTileOp()(mod)["main"]
 
 
+def test_ppu_lower_tile_op_rejects_symbolic_shared_layout():
+    m = T.dynamic("m")
+    target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
+
+    @T.prim_func
+    def before(A: T.Tensor((m, 16), "float16")):
+        T.func_attr({"global_symbol": "main", "target": target})
+        T.launch_thread("blockIdx.x", 1)
+        T.launch_thread("threadIdx.x", 32)
+        S = T.sblock_alloc_buffer((m, 16), "float16", scope="shared")
+        with T.sblock("root"):
+            T.annotate_layout({S: T.Layout((m, 16), lambda i, j: (i, j))})
+            S[0, 0] = A[0, 0]
+
+    mod = tvm.IRModule.from_expr(before)
+    with target:
+        mod = tilelang.ppu.transform.LayoutInference()(mod)
+        with pytest.raises(ValueError, match=r"Shared buffer `S` has symbolic extent"):
+            tilelang.ppu.transform.LowerTileOp()(mod)
+
+
 def test_ppu_lower_tile_op_respects_copy_annotation_for_pipeline_managed_cp_async():
     target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
 

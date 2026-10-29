@@ -368,7 +368,11 @@ void CodeGenTileLangC::VisitExpr_(const CallNode *op,
                                   std::ostream &os) { // NOLINT(*)
   ICHECK(tl::GetAtomicScope(op) == "device")
       << "Non-device-scope atomics are not implemented by the C backend";
-  if (op->op.same_as(builtin::tvm_stack_alloca())) {
+  if (op->op.same_as(tl::clamp())) {
+    ICHECK_EQ(op->args.size(), 3);
+    os << "tl::clamp(" << PrintExpr(op->args[0]) << ", "
+       << PrintExpr(op->args[1]) << ", " << PrintExpr(op->args[2]) << ")";
+  } else if (op->op.same_as(builtin::tvm_stack_alloca())) {
     std::string stack_name = name_supply_->FreshName("stack");
     const std::string &type = op->args[0].as<StringImmNode>()->value;
     const IntImmNode *num = op->args[1].as<IntImmNode>();

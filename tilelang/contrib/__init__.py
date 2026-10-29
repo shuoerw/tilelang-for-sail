@@ -1,3 +1,4 @@
 from .nvcc import compile_cuda  # noqa: F401
 from .hipcc import compile_hip  # noqa: F401
 from .hgcc import compile_ppu  # noqa: F401
+from .bisheng import compile_ascend  # noqa: F401
