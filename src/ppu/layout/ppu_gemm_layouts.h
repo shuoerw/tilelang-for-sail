@@ -31,12 +31,10 @@ Layout MakePPUSwizzledLayout(const tirx::Buffer &buffer, bool k_inner = true,
                              bool allow_pad = true, bool is_gemm_rs = false);
 
 enum class AIUSharedLayoutClass : uint8_t {
-  kAbsent,     // buffer has no entry in the layout map
-  kLinear,     // present and semantically the row-major identity
   kSwizzle32,  // canonical 32B swizzle (unsupported by AIU)
   kSwizzle64,  // canonical 64B swizzle
   kSwizzle128, // canonical 128B swizzle
-  kOther,      // present, non-identity, and not a canonical swizzle
+  kOther,      // not a canonical swizzle layout
 };
 
 AIUSharedLayoutClass ClassifySharedLayoutForAIU(const Layout &layout,

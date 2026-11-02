@@ -56,16 +56,16 @@ def matmul_scaled(A, B, A_scale, B_scale, block_M, block_N, block_K, num_stages)
 
         T.clear(C_local)
         for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-            T.copy(A[by * block_M, k * block_K], A_shared)
-            T.copy(B[bx * block_N, k * block_K], B_shared)
+            T.copy(A[by * block_M, k * block_K], A_shared, prefer_instruction="aiu")
+            T.copy(B[bx * block_N, k * block_K], B_shared, prefer_instruction="aiu")
             # Scale tensors use the benchmark ABI: physical [K/64, M/N].
             if block_K == 64:
-                T.copy(A_scale[k, by * block_M], A_scale_shared)
-                T.copy(B_scale[k, bx * block_N], B_scale_shared)
+                T.copy(A_scale[k, by * block_M], A_scale_shared, prefer_instruction="aiu")
+                T.copy(B_scale[k, bx * block_N], B_scale_shared, prefer_instruction="aiu")
             else:
                 scale_k = k * (block_K // 64)
-                T.copy(A_scale[scale_k, by * block_M], A_scale_shared)
-                T.copy(B_scale[scale_k, bx * block_N], B_scale_shared)
+                T.copy(A_scale[scale_k, by * block_M], A_scale_shared, prefer_instruction="aiu")
+                T.copy(B_scale[scale_k, bx * block_N], B_scale_shared, prefer_instruction="aiu")
             T.gemm(
                 A_shared,
                 B_shared,

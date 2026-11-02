@@ -395,18 +395,6 @@ AIUSharedLayoutClass ClassifySharedLayoutForAIU(const Layout &layout,
       composed.value().Recast(static_cast<int>(buffer->dtype.bits()), 8);
   const auto *sw = composed_bytes->swizzle.get();
   if (!sw->IsSwizzled()) {
-    Layout linear_ref = MakeLinearLayout(buffer->shape);
-    auto ref = cute::ComposedLayoutFromTileLang(linear_ref);
-    if (!ref.defined() || !can_recast_bytes(ref.value())) {
-      return AIUSharedLayoutClass::kOther;
-    }
-    auto ref_bytes =
-        ref.value().Recast(static_cast<int>(buffer->dtype.bits()), 8);
-    if (!ref_bytes->swizzle->IsSwizzled() &&
-        composed_bytes->offset == ref_bytes->offset &&
-        StructuralEqual()(composed_bytes->layout, ref_bytes->layout)) {
-      return AIUSharedLayoutClass::kLinear;
-    }
     return AIUSharedLayoutClass::kOther;
   }
   if (sw->m_base != 4 || sw->s_shift != 3 || sw->b_bits < 1 || sw->b_bits > 3) {

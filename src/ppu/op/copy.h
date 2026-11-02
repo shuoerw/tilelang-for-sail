@@ -66,9 +66,11 @@ struct AIUWarpPartition {
   int rows_per_warp = 0;
 };
 
-std::optional<AIUWarpPartition>
-FindAIUWarpPartition(bool swizzled, int swizzle_bytes, int64_t height,
-                     int64_t width_bytes, int num_warps);
+// Partition a canonical 64B/128B swizzled tile among the available warps.
+std::optional<AIUWarpPartition> FindAIUWarpPartition(int swizzle_bytes,
+                                                     int64_t height,
+                                                     int64_t width_bytes,
+                                                     int num_warps);
 
 // Final PPU lowering decision. Explicit T.tma_copy/T.async_copy semantics are
 // enforced here and reported through CopyInstSelection::reason.

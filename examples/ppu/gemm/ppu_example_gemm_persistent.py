@@ -23,8 +23,8 @@ def matmul_non_persistent(A, B, block_M, block_N, block_K, threads, num_stages, 
 
         T.clear(C_local)
         for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-            T.copy(A[bx * block_M, k * block_K], A_shared)
-            T.copy(B[k * block_K, by * block_N], B_shared)
+            T.copy(A[bx * block_M, k * block_K], A_shared, prefer_instruction="aiu")
+            T.copy(B[k * block_K, by * block_N], B_shared, prefer_instruction="aiu")
             T.gemm(A_shared, B_shared, C_local)
 
         T.copy(C_local, C_shared)
@@ -59,8 +59,8 @@ def matmul_persistent(
             for bx, by in T.Persistent([T.ceildiv(M, block_M), T.ceildiv(N, block_N)], sm_num, block_id):
                 T.clear(C_local)
                 for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-                    T.copy(A[bx * block_M, k * block_K], A_shared)
-                    T.copy(B[k * block_K, by * block_N], B_shared)
+                    T.copy(A[bx * block_M, k * block_K], A_shared, prefer_instruction="aiu")
+                    T.copy(B[k * block_K, by * block_N], B_shared, prefer_instruction="aiu")
                     T.gemm(A_shared, B_shared, C_local)
 
                 T.copy(C_local, C_shared)
@@ -74,8 +74,8 @@ def matmul_persistent(
                 if bx * block_M < M and by * block_N < N:
                     T.clear(C_local)
                     for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-                        T.copy(A[bx * block_M, k * block_K], A_shared)
-                        T.copy(B[k * block_K, by * block_N], B_shared)
+                        T.copy(A[bx * block_M, k * block_K], A_shared, prefer_instruction="aiu")
+                        T.copy(B[k * block_K, by * block_N], B_shared, prefer_instruction="aiu")
                         T.gemm(A_shared, B_shared, C_local)
 
                     T.copy(C_local, C_shared)

@@ -1344,9 +1344,8 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   int instruction_dim_elems =
       AiuElementsForBytes(swizzle_bytes, global_tensor->dtype);
   int num_warps = thread_extent_value / 32;
-  auto partition = FindAIUWarpPartition(
-      /*swizzled=*/true, swizzle_bytes, outer_box_dim_value, inner_box_bytes,
-      num_warps);
+  auto partition = FindAIUWarpPartition(swizzle_bytes, outer_box_dim_value,
+                                        inner_box_bytes, num_warps);
   if (!partition.has_value()) {
     return fallback("no legal even AIU warp partition exists");
   }
