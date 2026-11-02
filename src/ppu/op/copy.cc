@@ -1161,24 +1161,6 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     return fallback("global tensor rank is outside [2, 5]");
   }
 
-  Array<PrimExpr> shared_indices;
-  for (auto r : shared_range) {
-    shared_indices.push_back(r->min);
-  }
-  std::vector<PrimExpr> shared_strides;
-  PrimExpr shared_stride = 1;
-  for (size_t i = 0; i < shared_tensor->shape.size(); i++) {
-    auto s = shared_tensor->shape[shared_tensor->shape.size() - i - 1];
-    shared_strides.insert(shared_strides.begin(), shared_stride);
-    shared_stride *= s;
-  }
-  ICHECK_EQ(shared_strides.size(), shared_indices.size())
-      << "shared_strides.size() != shared_indices.size()";
-  PrimExpr shared_offset = 0;
-  for (size_t i = 0; i < shared_indices.size(); i++) {
-    shared_offset += shared_indices[i] * shared_strides[i];
-  }
-
   auto global_addr = global_tensor->data;
   auto global_shape = ReverseArray(global_tensor->shape);
   Array<PrimExpr> global_stride;
@@ -1288,6 +1270,10 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
     return fallback("AIU requires positive static dimensions and a multiple "
                     "of 32 threads");
   }
+  if (!analyzer->CanProveEqual(FloorMod(lower_args.thread_bounds->min, 32),
+                               0)) {
+    return fallback("AIU requires a warp-aligned thread range");
+  }
   if (outer_box_dim_value > 2048) {
     return fallback("AIU requires at most 2048 rows");
   }
@@ -1295,6 +1281,10 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   int dtype_bits = global_tensor->dtype.bits();
   bool is_sub_byte = (dtype_bits < 8);
   int packing_factor = is_sub_byte ? 8 / dtype_bits : 1;
+  if (inner_box_dim_value % packing_factor != 0) {
+    return fallback("sub-byte tile width is not divisible by the packing "
+                    "factor");
+  }
   int64_t inner_box_bytes =
       AiuBytesFromElements(inner_box_dim_value, global_tensor->dtype);
   if (inner_box_bytes <= 0 || inner_box_bytes > 1024) {
@@ -1306,10 +1296,6 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
                     std::to_string(swizzle_bytes) + " bytes");
   }
   if (is_sub_byte) {
-    if (inner_box_dim_value % packing_factor != 0) {
-      return fallback("sub-byte tile width is not divisible by the packing "
-                      "factor");
-    }
     if (auto *shape_imm = global_shape[0].as<IntImmNode>()) {
       if (shape_imm->value % packing_factor != 0) {
         return fallback(
@@ -1332,6 +1318,35 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
 
   int instruction_dim_elems =
       AiuElementsForBytes(swizzle_bytes, global_tensor->dtype);
+  const size_t shared_rank = shared_range.size();
+  if (shared_rank < 2 || shared_rank != shared_tensor_unmapped->shape.size()) {
+    return fallback("AIU requires a two-dimensional shared tile");
+  }
+  const size_t shared_row_axis = shared_rank - 2;
+  const size_t shared_col_axis = shared_rank - 1;
+  for (size_t axis = 0; axis < shared_rank; ++axis) {
+    const Range &range = shared_range[axis];
+    if ((axis < shared_row_axis &&
+         !analyzer->CanProveEqual(range->extent, 1)) ||
+        !analyzer->CanProve(range->min >= 0) ||
+        !analyzer->CanProve(range->min + range->extent <=
+                            shared_tensor_unmapped->shape[axis])) {
+      return fallback("shared region is not a bounded two-dimensional tile");
+    }
+  }
+  if (!analyzer->CanProveEqual(shared_range[shared_row_axis]->extent,
+                               outer_box_dim_value) ||
+      !analyzer->CanProveEqual(shared_range[shared_col_axis]->extent,
+                               inner_box_dim_value) ||
+      !analyzer->CanProveEqual(FloorMod(shared_range[shared_row_axis]->min, 8),
+                               0) ||
+      !analyzer->CanProveEqual(
+          FloorMod(shared_range[shared_col_axis]->min, instruction_dim_elems),
+          0) ||
+      !analyzer->CanProveEqual(shared_tensor->elem_offset, 0)) {
+    return fallback("shared region does not align with the AIU swizzle tile");
+  }
+
   int num_warps = thread_extent_value / 32;
   auto partition = FindAIUWarpPartition(swizzle_bytes, outer_box_dim_value,
                                         inner_box_bytes, num_warps);
@@ -1364,7 +1379,8 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   }
 
   PrimExpr warp_id =
-      FloorDiv(lower_args.thread_index, IntImm(DataType::Int(32), 32));
+      FloorDiv(lower_args.thread_index - lower_args.thread_bounds->min,
+               IntImm(DataType::Int(32), 32));
   PrimExpr row_split =
       FloorDiv(warp_id, IntImm(DataType::Int(32), partition->col_splits));
   PrimExpr col_group =
@@ -1381,11 +1397,21 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   load_stmts.reserve(partition->blocks_per_warp);
   for (int block = 0; block < partition->blocks_per_warp; ++block) {
     PrimExpr col_block = col_group + block;
+    Array<PrimExpr> shared_coords =
+        shared_range.Map([](Range range) { return range->min; });
+    shared_coords.Set(shared_row_axis,
+                      shared_coords[shared_row_axis] +
+                          row_split * partition->rows_per_warp);
+    shared_coords.Set(shared_col_axis, shared_coords[shared_col_axis] +
+                                           col_block * instruction_dim_elems);
+    auto shared_offset =
+        LinearOffsetOfIndices(shared_tensor_unmapped, shared_coords,
+                              lower_args.buffer_remap, lower_args.layout_map);
+    if (!shared_offset.has_value()) {
+      return fallback("cannot determine the shared region's physical address");
+    }
     PrimExpr shared_addr = shared_tensor.access_ptr(
-        2, DataType::Handle(), 1,
-        shared_offset +
-            row_split * instruction_dim_elems * partition->rows_per_warp +
-            col_block * instruction_dim_elems * outer_box_dim_value,
+        2, DataType::Handle(), 1, analyzer->Simplify(shared_offset.value()),
         total_elements);
 
     Array<PrimExpr> local_global_coords = global_coords;
