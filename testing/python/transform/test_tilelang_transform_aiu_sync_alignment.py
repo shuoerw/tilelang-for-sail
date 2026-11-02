@@ -591,8 +591,8 @@ def test_pipeline_aiu_loads_retain_group_ownership(monkeypatch, num_stages, bloc
             c = T.alloc_fragment((block_m, 128), T.float32)
             T.clear(c)
             for k in T.Pipelined(4, num_stages=num_stages):
-                T.copy(A[0, k * 64], a, prefer_instruction="aiu")
-                T.copy(B[k * 64, 0], b, prefer_instruction="aiu")
+                T.copy(A[0, k * 64], a)
+                T.copy(B[k * 64, 0], b)
                 T.gemm(a, b, c)
             T.copy(c, C)
 

@@ -49,7 +49,7 @@ def _make_kernel(matrix, swizzled):
                     fragment: _fragment_layout(matrix),
                 }
             )
-            T.copy(A, shared, prefer_instruction="aiu")
+            T.copy(A, shared)
             T.copy(shared[:, :64], fragment)
             T.copy(fragment, B)
 

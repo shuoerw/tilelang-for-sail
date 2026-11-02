@@ -18,8 +18,8 @@ def matmul(A, B, block_M, block_N, block_K, num_stages, dtype=T.float16, accum_d
 
         T.clear(C_local)
         for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-            T.copy(A[by * block_M, k * block_K], A_shared, prefer_instruction="aiu")
-            T.copy(B[k * block_K, bx * block_N], B_shared, prefer_instruction="aiu")
+            T.copy(A[by * block_M, k * block_K], A_shared)
+            T.copy(B[k * block_K, bx * block_N], B_shared)
             T.gemm(A_shared, B_shared, C_local)
 
         T.copy(C_local, C[by * block_M, bx * block_N])

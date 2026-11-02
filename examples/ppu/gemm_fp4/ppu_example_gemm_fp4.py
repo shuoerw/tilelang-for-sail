@@ -67,13 +67,13 @@ def _make_matmul(pass_configs=None):
             T.clear(C_local)
             for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
                 if trans_A:
-                    T.copy(A[k * block_K, by * block_M], A_shared, prefer_instruction="aiu")
+                    T.copy(A[k * block_K, by * block_M], A_shared)
                 else:
-                    T.copy(A[by * block_M, k * block_K], A_shared, prefer_instruction="aiu")
+                    T.copy(A[by * block_M, k * block_K], A_shared)
                 if trans_B:
-                    T.copy(B[bx * block_N, k * block_K], B_shared, prefer_instruction="aiu")
+                    T.copy(B[bx * block_N, k * block_K], B_shared)
                 else:
-                    T.copy(B[k * block_K, bx * block_N], B_shared, prefer_instruction="aiu")
+                    T.copy(B[k * block_K, bx * block_N], B_shared)
                 T.gemm(A_shared, B_shared, C_local, trans_A, trans_B)
 
             T.copy(C_local, C[by * block_M, bx * block_N])

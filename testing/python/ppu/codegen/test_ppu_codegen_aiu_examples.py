@@ -40,7 +40,7 @@ GEMM_ARGS = dict(M=256, N=256, K=256, block_M=64, block_N=64, block_K=64, num_st
         ),
     ],
 )
-def test_aiu_enabled_example_codegen(monkeypatch, path, entry, kwargs):
+def test_aiu_enabled_examples_select_automatically(monkeypatch, path, entry, kwargs):
     example = EXAMPLES / path
     monkeypatch.syspath_prepend(str(example.parent))
     with TARGET:

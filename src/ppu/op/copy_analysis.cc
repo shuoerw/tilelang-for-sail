@@ -352,7 +352,8 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
   }
 
   if (facts.no_implicit_async_commit_wait) {
-    if (facts.prefer_instruction == PreferredCopyInstruction::kAIU &&
+    if ((facts.prefer_instruction == PreferredCopyInstruction::kAuto ||
+         facts.prefer_instruction == PreferredCopyInstruction::kAIU) &&
         !facts.pass_context_disables_aiu && facts.can_aiu_load) {
       return Supported(CopyInst::kAiuLoad);
     }
@@ -392,6 +393,10 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
 
   if (facts.prefer_instruction == PreferredCopyInstruction::kSync) {
     return Supported(SelectSyncLikeInst(facts));
+  }
+
+  if (!facts.pass_context_disables_aiu && facts.can_aiu_load) {
+    return Supported(CopyInst::kAiuLoad);
   }
 
   return Supported(SelectSyncLikeInst(facts));

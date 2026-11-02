@@ -1103,17 +1103,6 @@ static void RequireAIUSmemAlignment(const LowerArgs &lower_args,
 Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
                     arith::Analyzer *analyzer) {
   bool no_implicit_commit_wait = GetNoImplicitAsyncCommitWait(op);
-  bool preferred_aiu = false;
-  if (auto prefer = op.annotations.Get("prefer_instruction")) {
-    if (auto str = prefer->as<StringImmNode>()) {
-      preferred_aiu = str->value == "aiu";
-    }
-  }
-
-  if (!preferred_aiu) {
-    ICHECK(false) << "AIU lowering is reachable only through an AIU copy "
-                     "preference.";
-  }
   Buffer global_tensor = op.src;
   Buffer shared_tensor = op.dst;
   Buffer shared_tensor_unmapped = shared_tensor;
@@ -1121,7 +1110,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   Array<Range> shared_range = op.dst_range;
 
   auto fallback = [&](const std::string &reason) -> Stmt {
-    DLOG(WARNING) << "AIU copy preference falls back to "
+    DLOG(WARNING) << "AIU copy falls back to "
                      "cp.async: "
                   << reason << ", src=" << op.src->name
                   << ", dst=" << op.dst->name;

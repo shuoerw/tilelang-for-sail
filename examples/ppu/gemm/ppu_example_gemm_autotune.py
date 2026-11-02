@@ -140,8 +140,8 @@ def get_best_config(
                 T.use_swizzle(panel_size=10, enable=enable_rasteration)
                 T.clear(C_local)
                 for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-                    T.copy(A[by * block_M, k * block_K], A_shared, prefer_instruction="aiu")
-                    T.copy(B[bx * block_N, k * block_K], B_shared, prefer_instruction="aiu")
+                    T.copy(A[by * block_M, k * block_K], A_shared)
+                    T.copy(B[bx * block_N, k * block_K], B_shared)
                     T.gemm(
                         A_shared,
                         B_shared,
@@ -202,8 +202,8 @@ def matmul(M, N, K, block_M, block_N, block_K, num_stages, thread_num, enable_ra
             T.use_swizzle(panel_size=10, enable=enable_rasteration)
             T.clear(C_local)
             for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-                T.copy(A[by * block_M, k * block_K], A_shared, prefer_instruction="aiu")
-                T.copy(B[bx * block_N, k * block_K], B_shared, prefer_instruction="aiu")
+                T.copy(A[by * block_M, k * block_K], A_shared)
+                T.copy(B[bx * block_N, k * block_K], B_shared)
                 T.gemm(
                     A_shared,
                     B_shared,

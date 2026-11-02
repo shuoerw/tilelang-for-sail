@@ -149,7 +149,29 @@ GPU and set it in the target config or use the corresponding target tag—for ex
 Refer to NVIDIA’s [CUDA GPUs](https://developer.nvidia.com/cuda-gpus) page or the TVM source
 (`3rdparty/tvm/src/target/tag.cc`) for the latest mapping between devices and compute capabilities.
 
-## PPU AIU prefetch
+## PPU AIU copies
+
+On PPU 1.5, setting `tl.disable_aiu_lower=False` lets `T.copy` automatically
+select AIU for compatible global-to-shared copies. This also applies inside
+software pipelines: the pipeline manages commit/wait operations, while
+synchronous copies receive the synchronization needed before their consumers.
+AIU lowering is disabled by default.
+
+`prefer_instruction="aiu"` remains an optional preference. Copies that cannot
+use AIU fall back to another copy implementation. Explicit `T.async_copy`
+continues to use `cp.async`; enabling AIU does not change its synchronization
+contract.
+
+FP4 AIU fallbacks currently require `cp.async` to handle every destination
+store. Layouts or regions that leave FP4 buffer stores produce an unsupported-case
+diagnostic instead of using nibble read-modify-write stores. Use a byte-aligned
+layout and copy region supported by AIU or `cp.async`, or copy explicitly packed
+`uint8` data. An explicit AIU preference also rejects FP4 copies with incompatible
+scopes or dtypes, or with AIU disabled.
+This restriction also applies to byte-aligned layouts when their fallback
+requires ordinary FP4 stores; byte alignment alone does not guarantee `cp.async`.
+
+### AIU prefetch
 
 On PPU 1.5, AIU loads use the `.LLC::128B` prefetch hint by default. Set
 the optional `prefetch_bytes` argument of `T.ppu_aiu_load` to a compile-time integer:
@@ -174,18 +196,9 @@ T.ppu_aiu_load(
 )
 ```
 
-Omitting the argument selects `128`. AIU loads selected for
-`T.copy(..., prefer_instruction="aiu")` also use this default. The prefetch size is
+Omitting the argument selects `128`. AIU loads selected for `T.copy`, whether
+automatically or through an explicit preference, also use this default. The prefetch size is
 a cache hint; copy extents and synchronization are unchanged.
-
-FP4 AIU fallbacks currently require `cp.async` to handle every destination
-store. Layouts or regions that leave FP4 buffer stores produce an unsupported-case
-diagnostic instead of using nibble read-modify-write stores. Use a byte-aligned
-layout and copy region supported by AIU or `cp.async`, or copy explicitly packed
-`uint8` data. An explicit AIU preference also rejects FP4 copies with incompatible
-scopes or dtypes, or with AIU disabled.
-This restriction also applies to byte-aligned layouts when their fallback
-requires ordinary FP4 stores; byte alignment alone does not guarantee `cp.async`.
 
 ## Creating targets programmatically
 

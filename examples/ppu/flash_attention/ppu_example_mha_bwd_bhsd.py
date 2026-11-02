@@ -43,7 +43,7 @@ def flashattn_fwd(batch, heads, seq_len, dim, is_causal, block_M, block_N):
             scores_sum = T.alloc_fragment([block_M], accum_dtype)
             logsum = T.alloc_fragment([block_M], accum_dtype)
 
-            T.copy(Q[bz, by, bx * block_M : (bx + 1) * block_M, :], Q_shared, prefer_instruction="aiu")
+            T.copy(Q[bz, by, bx * block_M : (bx + 1) * block_M, :], Q_shared)
             T.fill(acc_o, 0)
             T.fill(logsum, 0)
             T.fill(scores_max, -T.infinity(accum_dtype))
@@ -52,7 +52,7 @@ def flashattn_fwd(batch, heads, seq_len, dim, is_causal, block_M, block_N):
             #     Q_local[i, j] *= scale
             loop_range = T.ceildiv((bx + 1) * block_M, block_N) if is_causal else T.ceildiv(seq_len, block_N)
             for k in T.Pipelined(loop_range, num_stages=1):
-                T.copy(K[bz, by, k * block_N : (k + 1) * block_N, :], K_shared, prefer_instruction="aiu")
+                T.copy(K[bz, by, k * block_N : (k + 1) * block_N, :], K_shared)
                 if is_causal:
                     for i, j in T.Parallel(block_M, block_N):
                         acc_s[i, j] = T.if_then_else(bx * block_M + i >= k * block_N + j, 0, -T.infinity(acc_s.dtype))
@@ -60,7 +60,7 @@ def flashattn_fwd(batch, heads, seq_len, dim, is_causal, block_M, block_N):
                     for i, j in T.Parallel(block_M, block_N):
                         acc_s[i, j] = T.if_then_else(k * block_N + j >= seq_len, -T.infinity(acc_s.dtype), 0)
                 T.gemm(Q_shared, K_shared, acc_s, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
-                T.copy(V[bz, by, k * block_N : (k + 1) * block_N, :], V_shared, prefer_instruction="aiu")
+                T.copy(V[bz, by, k * block_N : (k + 1) * block_N, :], V_shared)
                 T.copy(scores_max, scores_max_prev)
                 T.reduce_max(acc_s, scores_max, dim=1, clear=False)
                 for i in T.Parallel(block_M):
@@ -210,17 +210,17 @@ def flashattn_bwd(batch, heads, seq_len, dim, is_causal, block_M, block_N):
                     dQ: make_dq_layout(dQ),
                 }
             )
-            T.copy(K[bz, bx, by * block_M : (by + 1) * block_M, :], K_shared, prefer_instruction="aiu")
-            T.copy(V[bz, bx, by * block_M : (by + 1) * block_M, :], V_shared, prefer_instruction="aiu")
+            T.copy(K[bz, bx, by * block_M : (by + 1) * block_M, :], K_shared)
+            T.copy(V[bz, bx, by * block_M : (by + 1) * block_M, :], V_shared)
             T.clear(dv)
             T.clear(dk)
             loop_st = T.floordiv(by * block_M, block_N) if is_causal else 0
             loop_ed = T.ceildiv(seq_len, block_N)
             for k in T.Pipelined(loop_st, loop_ed, num_stages=2):
-                T.copy(Q[bz, bx, k * block_N : (k + 1) * block_N, :], q, prefer_instruction="aiu")
+                T.copy(Q[bz, bx, k * block_N : (k + 1) * block_N, :], q)
                 T.clear(qkT)
                 T.gemm(K_shared, q, qkT, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
-                T.copy(lse[bz, bx, k * block_N : (k + 1) * block_N], lse_shared, prefer_instruction="aiu")
+                T.copy(lse[bz, bx, k * block_N : (k + 1) * block_N], lse_shared)
                 for i, j in T.Parallel(block_M, block_N):
                     qkT[i, j] = T.exp2(qkT[i, j] * scale - lse_shared[j])
                 if is_causal:
@@ -228,13 +228,13 @@ def flashattn_bwd(batch, heads, seq_len, dim, is_causal, block_M, block_N):
                         qkT[i, j] = T.if_then_else(by * block_M + i <= k * block_N + j, qkT[i, j], 0)
                 # We don't need to handle OOB positions for non-causal cases,
                 # since OOB values won't affect other positions here.
-                T.copy(dO[bz, bx, k * block_N : (k + 1) * block_N, :], do, prefer_instruction="aiu")
+                T.copy(dO[bz, bx, k * block_N : (k + 1) * block_N, :], do)
                 T.clear(dsT)
                 T.gemm(V_shared, do, dsT, transpose_B=True, policy=T.GemmWarpPolicy.FullRow)
                 T.copy(qkT, qkT_cast)
                 T.gemm(qkT_cast, do, dv, policy=T.GemmWarpPolicy.FullRow)
 
-                T.copy(Delta[bz, bx, k * block_N : (k + 1) * block_N], delta, prefer_instruction="aiu")
+                T.copy(Delta[bz, bx, k * block_N : (k + 1) * block_N], delta)
 
                 for i, j in T.Parallel(block_M, block_N):
                     dsT_cast[i, j] = qkT[i, j] * (dsT[i, j] - delta[j]) * sm_scale

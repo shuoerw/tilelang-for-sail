@@ -54,7 +54,7 @@ def flashattn(batch, heads, seq_q, seq_kv, dim, is_causal, block_M=64, block_N=6
             scores_sum = T.alloc_fragment([block_M], accum_dtype)
             logsum = T.alloc_fragment([block_M], accum_dtype)
 
-            T.copy(Q[bz, by, bx * block_M : (bx + 1) * block_M, :], Q_shared, prefer_instruction="aiu")
+            T.copy(Q[bz, by, bx * block_M : (bx + 1) * block_M, :], Q_shared)
             T.fill(acc_o, 0)
             T.fill(logsum, 0)
             T.fill(scores_max, -T.infinity(accum_dtype))
@@ -66,7 +66,7 @@ def flashattn(batch, heads, seq_q, seq_kv, dim, is_causal, block_M=64, block_N=6
             )
 
             for k in T.Pipelined(loop_range, num_stages=num_stages):
-                T.copy(K[bz, by, k * block_N : (k + 1) * block_N, :], K_shared, prefer_instruction="aiu")
+                T.copy(K[bz, by, k * block_N : (k + 1) * block_N, :], K_shared)
                 if is_causal:
                     for i, j in T.Parallel(block_M, block_N):
                         q_idx = bx * block_M + i + past_len
@@ -94,7 +94,7 @@ def flashattn(batch, heads, seq_q, seq_kv, dim, is_causal, block_M=64, block_N=6
                 for i, j in T.Parallel(block_M, dim):
                     acc_o[i, j] *= scores_scale[i]
 
-                T.copy(V[bz, by, k * block_N : (k + 1) * block_N, :], V_shared, prefer_instruction="aiu")
+                T.copy(V[bz, by, k * block_N : (k + 1) * block_N, :], V_shared)
                 T.gemm(acc_s_cast, V_shared, acc_o, policy=T.GemmWarpPolicy.FullRow)
 
             for i, j in T.Parallel(block_M, dim):

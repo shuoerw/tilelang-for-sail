@@ -76,6 +76,20 @@ def test_aiu_ineligible_dtype_uses_cp_async():
     assert "tl.ptx_cp_async" in ops
 
 
+@pytest.mark.parametrize("prefer_instruction", ["cp_async", "sync"])
+def test_explicit_copy_preference_prevents_automatic_aiu(prefer_instruction):
+    @T.prim_func
+    def main(A: T.Tensor((16, 64), "float16")):
+        with T.Kernel(1, threads=128):
+            shared = T.alloc_shared((16, 64), "float16")
+            T.annotate_layout({shared: make_full_bank_swizzled_layout(shared)})
+            T.copy(A, shared, prefer_instruction=prefer_instruction)
+
+    ops = _lower(main)
+    assert "tl.ppu_aiu_load" not in ops
+    assert ("tl.ptx_cp_async" in ops) == (prefer_instruction == "cp_async")
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("annotated_aiu", [False, True])
 @pytest.mark.parametrize("no_implicit_commit_wait", [False, True])

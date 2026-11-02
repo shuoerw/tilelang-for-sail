@@ -1,4 +1,4 @@
-"""Functional tests for the PPU AIU copy preference."""
+"""Functional tests for automatic and preferred PPU AIU copies."""
 
 import torch
 
@@ -56,9 +56,16 @@ def test_forced_aiu_copy_api_is_removed():
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
-def test_plain_copy_does_not_use_aiu():
+def test_plain_copy_uses_aiu_and_gets_sync():
     source = _source(_compile("plain"))
-    assert "tl::aiu_load" not in source
+    assert "tl::aiu_load" in source
+    assert "tl::cp_async_commit()" in source
+    assert "tl::cp_async_wait" in source
+
+
+@tilelang.testing.requires_ppu_compute_version(1, 5)
+def test_plain_aiu_copy_can_be_disabled():
+    assert "tl::aiu_load" not in _source(_compile("plain", enabled=False))
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)

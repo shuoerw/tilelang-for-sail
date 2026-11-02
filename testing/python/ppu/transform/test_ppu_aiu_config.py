@@ -17,7 +17,8 @@ CONFIGS = [
 
 
 @pytest.mark.parametrize("config, expected", CONFIGS)
-def test_direct_pass_context_honors_aiu_disable_flag(config, expected):
+@pytest.mark.parametrize("prefer_instruction", [None, "aiu"])
+def test_direct_pass_context_honors_aiu_disable_flag(config, expected, prefer_instruction):
     target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
 
     @T.prim_func
@@ -25,7 +26,7 @@ def test_direct_pass_context_honors_aiu_disable_flag(config, expected):
         with T.Kernel(1, threads=128):
             shared = T.alloc_shared((16, 128), "float16")
             T.annotate_layout({shared: make_full_bank_swizzled_layout(shared)})
-            T.copy(A, shared, prefer_instruction="aiu")
+            T.copy(A, shared, prefer_instruction=prefer_instruction)
 
     # Construct the native context directly: no Python config normalization.
     with target, tvm.transform.PassContext(config=config):

@@ -73,7 +73,7 @@ def flashattn(batch_size, UQ, UKV, heads, dim, is_causal, block_M=64, block_N=64
             kv_current_seqlen = kv_end_idx - kv_start_idx
 
             T.copy(
-                Q_unpad[q_start_idx + bx * block_M : q_start_idx + bx * block_M + block_M, head_idx, :], Q_shared, prefer_instruction="aiu"
+                Q_unpad[q_start_idx + bx * block_M : q_start_idx + bx * block_M + block_M, head_idx, :], Q_shared
             )  # OOB positions will be handled below
 
             T.fill(acc_o, 0)
@@ -90,9 +90,7 @@ def flashattn(batch_size, UQ, UKV, heads, dim, is_causal, block_M=64, block_N=64
             for k in T.Pipelined(loop_range, num_stages=num_stages):
                 # Q * K
                 T.copy(
-                    K_unpad[kv_start_idx + k * block_N : kv_start_idx + k * block_N + block_N, head_idx, :],
-                    K_shared,
-                    prefer_instruction="aiu",
+                    K_unpad[kv_start_idx + k * block_N : kv_start_idx + k * block_N + block_N, head_idx, :], K_shared
                 )  # OOB positions will be handled below
                 if is_causal:
                     for i, j in T.Parallel(block_M, block_N):
@@ -139,9 +137,7 @@ def flashattn(batch_size, UQ, UKV, heads, dim, is_causal, block_M=64, block_N=64
 
                 # V * softmax(Q * K)
                 T.copy(
-                    V_unpad[kv_start_idx + k * block_N : kv_start_idx + k * block_N + block_N, head_idx, :],
-                    V_shared,
-                    prefer_instruction="aiu",
+                    V_unpad[kv_start_idx + k * block_N : kv_start_idx + k * block_N + block_N, head_idx, :], V_shared
                 )  # OOB positions' weights are 0
 
                 T.gemm(acc_s_cast, V_shared, acc_o, policy=T.GemmWarpPolicy.FullRow)

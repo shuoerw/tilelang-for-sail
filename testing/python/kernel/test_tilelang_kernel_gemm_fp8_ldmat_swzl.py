@@ -43,8 +43,8 @@ def gemm_fp8_kernel(block_M, block_N, block_K, dtype=T.float8_e4m3fn, accum_dtyp
 
             T.clear(C_local)
             for k in T.Pipelined(T.ceildiv(K, block_K), num_stages=2):
-                T.copy(A[by * block_M, k * block_K], A_shared, prefer_instruction="aiu")
-                T.copy(B[bx * block_N, k * block_K], B_shared, prefer_instruction="aiu")
+                T.copy(A[by * block_M, k * block_K], A_shared)
+                T.copy(B[bx * block_N, k * block_K], B_shared)
                 T.gemm(A_shared, B_shared, C_local, transpose_B=True)
 
             T.copy(C_local, C[by * block_M, bx * block_N])

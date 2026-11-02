@@ -36,7 +36,7 @@ def _layout(buffer, bank_bytes, kind):
     return Layout(buffer.shape, forward)
 
 
-def _lower(dtype, bank_bytes, kind, threads):
+def _lower(dtype, bank_bytes, kind, threads, prefer_instruction):
     height = 16
     width = 2 * bank_bytes * 8 // tvm.DataType(dtype).bits
     target = tvm.target.Target({"kind": "ppu", "arch": "ppu_15"})
@@ -46,7 +46,7 @@ def _lower(dtype, bank_bytes, kind, threads):
         with T.Kernel(1, threads=threads):
             shared = T.alloc_shared((height, width), dtype)
             T.annotate_layout({shared: _layout(shared, bank_bytes, kind)})
-            T.copy(A[:, width : 2 * width], shared, prefer_instruction="aiu")
+            T.copy(A[:, width : 2 * width], shared, prefer_instruction=prefer_instruction)
 
     mod = tvm.IRModule.from_expr(main)
     with target, tvm.transform.PassContext(opt_level=3, config={"tl.disable_aiu_lower": False}):
@@ -68,12 +68,13 @@ def _lower(dtype, bank_bytes, kind, threads):
 @pytest.mark.parametrize("bank_bytes", [64, 128])
 @pytest.mark.parametrize("threads", [32, 128])
 @pytest.mark.parametrize("kind", ["canonical", "flat", "row_major", "offset"])
-def test_aiu_requires_canonical_address_mapping(dtype, bank_bytes, threads, kind):
+@pytest.mark.parametrize("prefer_instruction", [None, "aiu"])
+def test_aiu_requires_canonical_address_mapping(dtype, bank_bytes, threads, kind, prefer_instruction):
     if dtype == "float4_e2m1fn" and kind == "row_major":
         with pytest.raises(tvm.error.InternalError, match="AIU FP4 fallback requires all stores to use cp.async"):
-            _lower(dtype, bank_bytes, kind, threads)
+            _lower(dtype, bank_bytes, kind, threads, prefer_instruction)
         return
-    calls = _lower(dtype, bank_bytes, kind, threads)
+    calls = _lower(dtype, bank_bytes, kind, threads, prefer_instruction)
     if kind in ("row_major", "offset"):
         assert not calls, "Matching XOR bits cannot justify a different physical address mapping"
         return
@@ -101,6 +102,7 @@ def test_aiu_requires_canonical_address_mapping(dtype, bank_bytes, threads, kind
 
 
 @pytest.mark.parametrize("kind", ["odd_offset", "odd_stride"])
-def test_fp4_non_byte_aligned_layout_reports_unsupported_fallback(kind):
+@pytest.mark.parametrize("prefer_instruction", [None, "aiu"])
+def test_fp4_non_byte_aligned_layout_reports_unsupported_fallback(kind, prefer_instruction):
     with pytest.raises(tvm.error.InternalError, match="AIU FP4 fallback requires all stores to use cp.async"):
-        _lower("float4_e2m1fn", 128, kind, 128)
+        _lower("float4_e2m1fn", 128, kind, 128, prefer_instruction)
