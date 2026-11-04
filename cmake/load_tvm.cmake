@@ -164,3 +164,59 @@ tilelang_patch_tvm_loop_analysis("src/arith/ir_visitor_with_analyzer.cc"
       constraint_scope_.Current().Emplace(&analyzer_, op->extent > 0);
       this->VisitStmt(op->body);
     });]=])
+
+# IterMap's padding/split composition requires a positive divisor. Reject a
+# provably non-positive divisor after scale handling so both negative-scale
+# cancellation and directly written negative divisors use the normal fallback.
+# Backport: https://github.com/apache/tvm/pull/20756
+set(iter_map_source "${TVM_SOURCE}/src/arith/iter_affine_map.cc")
+file(READ "${iter_map_source}" iter_map_contents)
+set(iter_map_floordiv_before [=[  // We handle scale!=1 in above code, hence we only consider floordiv(x, rhs) below
+  // where x=floormod(floordiv(iter, lower_factor), extent) + base
+
+  auto pair = PadDividendToDivisor(lhs, base, rhs);]=])
+set(iter_map_floordiv_after [=[  // We handle scale!=1 in above code, hence we only consider floordiv(x, rhs) below
+  // where x=floormod(floordiv(iter, lower_factor), extent) + base
+
+  if (analyzer_->CanProveLess(rhs, 1)) {
+    ErrorLogger(this) << "Cannot represent as IterMap: the divisor " << rhs
+                      << " of FloorDiv is not positive.";
+    return PrimExpr();
+  }
+
+  auto pair = PadDividendToDivisor(lhs, base, rhs);]=])
+set(iter_map_floormod_before [=[  // We handle scale!=1 in above code, hence we only consider floormod(x, rhs) below
+  // where x=floormod(floordiv(iter, lower_factor), extent) + base
+  PrimExpr source_upper_bound = lhs->source->extent;]=])
+set(iter_map_floormod_after [=[  // We handle scale!=1 in above code, hence we only consider floormod(x, rhs) below
+  // where x=floormod(floordiv(iter, lower_factor), extent) + base
+  if (analyzer_->CanProveLess(rhs, 1)) {
+    ErrorLogger(this) << "Cannot represent as IterMap: the divisor " << rhs
+                      << " of FloorMod is not positive.";
+    return PrimExpr();
+  }
+  PrimExpr source_upper_bound = lhs->source->extent;]=])
+
+set(iter_map_changed FALSE)
+foreach(iter_map_kind IN ITEMS floordiv floormod)
+  string(FIND "${iter_map_contents}" "${iter_map_${iter_map_kind}_after}" iter_map_patched)
+  if(iter_map_patched EQUAL -1)
+    string(FIND "${iter_map_contents}" "${iter_map_${iter_map_kind}_before}" iter_map_original)
+    if(iter_map_original EQUAL -1)
+      message(FATAL_ERROR
+        "Cannot apply TVM IterMap ${iter_map_kind} divisor fix: unexpected source. "
+        "Check compatibility with https://github.com/apache/tvm/pull/20756")
+    endif()
+    string(REPLACE
+      "${iter_map_${iter_map_kind}_before}"
+      "${iter_map_${iter_map_kind}_after}"
+      iter_map_contents
+      "${iter_map_contents}")
+    set(iter_map_changed TRUE)
+  endif()
+endforeach()
+
+if(iter_map_changed)
+  file(WRITE "${iter_map_source}" "${iter_map_contents}")
+  message(STATUS "Patched iter_affine_map.cc: reject non-positive IterMap divisors")
+endif()
