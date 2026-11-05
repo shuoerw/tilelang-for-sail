@@ -1,0 +1,1778 @@
+name: PPU 890P Performance Regression Bot
+
+on:
+  issue_comment:
+    types: [created]
+  push:
+    branches: [feature/ci-testing-dev]
+
+permissions: {}
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PPU_IMAGE: "download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.10.0-ubuntu24.04-hggcrt3-py312-20261005"
+
+jobs:
+  # Resolve the request identity, authorize the trigger, and freeze all PR metadata
+  # before any untrusted code is checked out. Covers both @ppu-regression comments
+  # on PRs and curated pushes to the staging branch.
+  resolve-pr:
+    name: Resolve Request & Check Permissions
+    if: >-
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       github.event.comment.body == '@ppu-regression') ||
+      (github.event_name == 'push' &&
+       github.repository == 't-head/tilelang-for-sail' &&
+       github.ref == 'refs/heads/feature/ci-testing-dev')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      pr_number: ${{ steps.pr-info.outputs.pr_number }}
+      base_ref: ${{ steps.pr-info.outputs.base_ref }}
+      base_sha: ${{ steps.pr-info.outputs.base_sha }}
+      head_sha: ${{ steps.pr-info.outputs.head_sha }}
+      comment_id: ${{ steps.pr-info.outputs.comment_id }}
+      request_kind: ${{ steps.pr-info.outputs.request_kind }}
+      request_order: ${{ steps.pr-info.outputs.request_order }}
+      request_key: ${{ steps.pr-info.outputs.request_key }}
+      trigger_label: ${{ steps.pr-info.outputs.trigger_label }}
+    steps:
+      - name: Check commenter permission
+        id: perm
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const username = context.payload.comment.user.login;
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner, repo, username,
+            });
+            const allowedPermissions = new Set([
+              'admin', 'maintain', 'write', 'triage', 'read', 'none',
+            ]);
+            if (typeof data.permission !== 'string' ||
+                !allowedPermissions.has(data.permission)) {
+              core.setFailed('Permission API returned an invalid permission enum');
+              return;
+            }
+            core.setOutput('permission', data.permission);
+
+      - name: Reject if not authorized
+        if: >-
+          github.event_name == 'issue_comment' &&
+          steps.perm.outputs.permission != 'admin' &&
+          steps.perm.outputs.permission != 'maintain' &&
+          steps.perm.outputs.permission != 'write'
+        shell: bash
+        env:
+          PERMISSION: ${{ steps.perm.outputs.permission }}
+        run: |
+          set -euo pipefail
+          case "$PERMISSION" in
+            admin|maintain|write|triage|read|none) ;;
+            *) echo "Permission API returned an invalid value"; exit 1 ;;
+          esac
+          echo "Not authorized for PPU regression"
+          exit 1
+
+      - name: Resolve request identity and freeze PR metadata
+        id: pr-info
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const fullRepo = `${owner}/${repo}`;
+            const shaPattern = /^[0-9a-f]{40}$/;
+            const baseRefPattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/;
+            const PUSH_ALLOWED_REPO = 't-head/tilelang-for-sail';
+            const PUSH_ALLOWED_REF = 'refs/heads/feature/ci-testing-dev';
+            const PUSH_ALLOWED_BRANCH = 'feature/ci-testing-dev';
+            const strictExactString = (value, expected, label) => {
+              if (typeof value !== 'string') {
+                throw new Error(`${label} is missing or not a string`);
+              }
+              if (value !== expected) {
+                throw new Error(`${label} gate failed: value=${JSON.stringify(value)}`);
+              }
+            };
+            const positiveSafeInteger = (value, label) => {
+              if (!Number.isSafeInteger(value) || value <= 0) {
+                throw new Error(`${label} is not a positive safe integer`);
+              }
+              return value;
+            };
+            const strictBaseRef = (value) => {
+              if (typeof value !== 'string' || !baseRefPattern.test(value) ||
+                  value.includes('..') || value.includes('//') || value.includes('@{') ||
+                  value.endsWith('.') || value.endsWith('/') || value.endsWith('.lock') ||
+                  value.split('/').some(part => !part || part.startsWith('.'))) {
+                throw new Error('PR base ref is outside the safe branch-name subset');
+              }
+              return value;
+            };
+            const strictOutput = (value, label, { allowEmpty = false, maxBytes = 255 } = {}) => {
+              if (typeof value !== 'string' || (!allowEmpty && value.length === 0) ||
+                  Buffer.byteLength(value, 'utf8') > maxBytes || /[\0\r\n]/.test(value)) {
+                throw new Error(`${label} is not a bounded single-line string`);
+              }
+              return value;
+            };
+
+            if (fullRepo !== PUSH_ALLOWED_REPO) {
+              core.setFailed(`Repository mismatch: ${fullRepo}`);
+              return;
+            }
+
+            const eventName = context.eventName;
+            let pr;
+            let prNumber;
+            let requestKind;
+            let requestOrder;
+            let requestKey;
+            let triggerLabel;
+            let commentId = '';
+
+            if (eventName === 'issue_comment') {
+              prNumber = context.payload.issue?.number;
+              const rawCommentId = context.payload.comment?.id;
+              if (!Number.isSafeInteger(prNumber) || prNumber <= 0 ||
+                  !Number.isSafeInteger(rawCommentId) || rawCommentId <= 0) {
+                core.setFailed('Invalid PR or trigger comment identifier');
+                return;
+              }
+              const { data: fetched } = await github.rest.pulls.get({
+                owner, repo, pull_number: prNumber,
+              });
+              pr = fetched;
+              requestKind = 'comment';
+              requestOrder = String(rawCommentId);
+              commentId = String(rawCommentId);
+              requestKey = `comment-${rawCommentId}`;
+              triggerLabel = `@ppu-regression (comment #${rawCommentId})`;
+            } else if (eventName === 'push') {
+              try {
+                strictExactString(context.payload.ref, PUSH_ALLOWED_REF, 'push ref');
+              } catch (error) {
+                core.setFailed(`Push ref gate failed: ${error.message}`);
+                return;
+              }
+              const headCommitId = context.payload.head_commit?.id;
+              if (typeof headCommitId !== 'string' || !shaPattern.test(headCommitId) ||
+                  headCommitId !== context.sha) {
+                core.setFailed(
+                  `Push head_commit.id must equal github.sha: head_commit=${JSON.stringify(headCommitId)} sha=${JSON.stringify(context.sha)}`,
+                );
+                return;
+              }
+              const openPrs = await github.paginate(github.rest.pulls.list, {
+                owner, repo, state: 'open',
+                head: `${owner}:${PUSH_ALLOWED_BRANCH}`,
+                per_page: 100,
+              });
+              const matched = openPrs.filter(candidate =>
+                candidate &&
+                candidate.state === 'open' && !candidate.merged &&
+                candidate.head?.repo?.full_name === fullRepo &&
+                candidate.base?.repo?.full_name === fullRepo &&
+                candidate.head?.ref === PUSH_ALLOWED_BRANCH,
+              );
+              if (matched.length !== 1) {
+                core.setFailed(
+                  `Push trigger requires exactly one open PR with head=${owner}:${PUSH_ALLOWED_BRANCH}; found ${matched.length}`,
+                );
+                return;
+              }
+              pr = matched[0];
+              if (pr.head.sha !== context.sha) {
+                core.setFailed(
+                  `PR head SHA ${pr.head.sha} does not match github.sha ${context.sha}`,
+                );
+                return;
+              }
+              if (pr.head.sha !== headCommitId) {
+                core.setFailed(
+                  `PR head SHA ${pr.head.sha} does not match head_commit.id ${headCommitId}`,
+                );
+                return;
+              }
+              prNumber = pr.number;
+              const rawRunId = Number(process.env.GITHUB_RUN_ID);
+              if (!Number.isSafeInteger(rawRunId) || rawRunId <= 0) {
+                core.setFailed('Invalid GITHUB_RUN_ID for push request order');
+                return;
+              }
+              requestKind = 'push';
+              requestOrder = String(rawRunId);
+              requestKey = `push-${context.sha}`;
+              triggerLabel =
+                `push to \`${PUSH_ALLOWED_BRANCH}\` @ \`${context.sha.substring(0, 8)}\``;
+            } else {
+              core.setFailed(`Unsupported event: ${eventName}`);
+              return;
+            }
+
+            try {
+              positiveSafeInteger(prNumber, 'PR number');
+            } catch (error) {
+              core.setFailed(`Invalid PR number: ${error.message}`);
+              return;
+            }
+            if (pr.state !== 'open') {
+              core.setFailed(`PR #${prNumber} is not open (state: ${pr.state})`);
+              return;
+            }
+            if (pr.merged) {
+              core.setFailed(`PR #${prNumber} is already merged`);
+              return;
+            }
+            if (pr.base.repo.full_name !== fullRepo || pr.head.repo.full_name !== fullRepo) {
+              core.setFailed(
+                `Fork PR not supported: head=${pr.head.repo.full_name} base=${pr.base.repo.full_name}`,
+              );
+              return;
+            }
+            try {
+              strictBaseRef(pr.base.ref);
+              if (!shaPattern.test(pr.base.sha) || !shaPattern.test(pr.head.sha)) {
+                throw new Error('PR API returned an invalid full SHA');
+              }
+              const expectedRequestKey = requestKind === 'comment'
+                ? `comment-${commentId}`
+                : `push-${pr.head.sha}`;
+              const expectedTriggerLabel = requestKind === 'comment'
+                ? `@ppu-regression (comment #${commentId})`
+                : `push to \`${PUSH_ALLOWED_BRANCH}\` @ \`${pr.head.sha.substring(0, 8)}\``;
+              strictExactString(requestKey, expectedRequestKey, 'request_key');
+              strictExactString(triggerLabel, expectedTriggerLabel, 'trigger_label');
+              strictOutput(String(prNumber), 'pr_number', { maxBytes: 16 });
+              strictOutput(pr.base.ref, 'base_ref');
+              strictOutput(pr.base.sha, 'base_sha', { maxBytes: 40 });
+              strictOutput(pr.head.sha, 'head_sha', { maxBytes: 40 });
+              strictOutput(commentId, 'comment_id', { allowEmpty: requestKind === 'push', maxBytes: 16 });
+              strictOutput(requestKind, 'request_kind', { maxBytes: 7 });
+              strictOutput(requestOrder, 'request_order', { maxBytes: 16 });
+              strictOutput(requestKey, 'request_key', { maxBytes: 64 });
+              strictOutput(triggerLabel, 'trigger_label', { maxBytes: 96 });
+            } catch (error) {
+              core.setFailed(`Refusing unsafe PR output: ${error.message}`);
+              return;
+            }
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('comment_id', commentId);
+            core.setOutput('request_kind', requestKind);
+            core.setOutput('request_order', requestOrder);
+            core.setOutput('request_key', requestKey);
+            core.setOutput('trigger_label', triggerLabel);
+            core.info(
+              `[${requestKind}] key=${requestKey} order=${requestOrder} PR #${prNumber}: base=${pr.base.ref}@${pr.base.sha} head=${pr.head.sha}`,
+            );
+
+
+  # Serialize trusted status writers and claim monotonic ownership before execution.
+  # Comment and push triggers each own an independent marker slot keyed by `kind=`;
+  # a slot is only compared against its own kind, so push verification runs cannot
+  # overwrite a human @ppu-regression request (and vice versa).
+  claim-request:
+    name: Claim Request Ownership
+    needs: resolve-pr
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    outputs:
+      should_run: ${{ steps.claim.outputs.should_run }}
+      status_comment_id: ${{ steps.claim.outputs.status_comment_id }}
+    concurrency:
+      group: "ppu-perf-890p-status-pr-${{ needs.resolve-pr.outputs.pr_number }}-${{ needs.resolve-pr.outputs.request_kind }}"
+      cancel-in-progress: false
+    env:
+      PR_NUMBER: ${{ needs.resolve-pr.outputs.pr_number }}
+      BASE_REF: ${{ needs.resolve-pr.outputs.base_ref }}
+      BASE_SHA: ${{ needs.resolve-pr.outputs.base_sha }}
+      HEAD_SHA: ${{ needs.resolve-pr.outputs.head_sha }}
+      COMMENT_ID: ${{ needs.resolve-pr.outputs.comment_id }}
+      REQUEST_KIND: ${{ needs.resolve-pr.outputs.request_kind }}
+      REQUEST_ORDER: ${{ needs.resolve-pr.outputs.request_order }}
+      REQUEST_KEY: ${{ needs.resolve-pr.outputs.request_key }}
+      TRIGGER_LABEL: ${{ needs.resolve-pr.outputs.trigger_label }}
+    steps:
+      - name: Claim status comment
+        id: claim
+        uses: actions/github-script@v9
+        with:
+          script: |
+            core.setOutput('should_run', 'false');
+            core.setOutput('status_comment_id', '');
+
+            const ownershipPattern = /^<!-- ppu-perf-regression-890p kind=(comment|push) request_order=([1-9][0-9]*) run_id=([1-9][0-9]*) run_attempt=([1-9][0-9]*) -->\n/;
+            const kindNamespacePattern = kind =>
+              new RegExp(`^<!-- ppu-perf-regression-890p kind=${kind} `);
+            const isTrustedBot = comment =>
+              comment.user?.login === 'github-actions[bot]' && comment.user?.type === 'Bot';
+            const positiveSafeInteger = (value, label) => {
+              if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)) {
+                throw new Error(`${label} is not a canonical positive integer`);
+              }
+              const parsed = Number(value);
+              if (!Number.isSafeInteger(parsed)) {
+                throw new Error(`${label} exceeds the safe integer range`);
+              }
+              return parsed;
+            };
+            const parseOwnership = (body, expectedKind) => {
+              if (typeof body !== 'string' || Buffer.byteLength(body, 'utf8') > 65536 ||
+                  /[\0\r]/.test(body)) {
+                throw new Error('status marker body is not a bounded safe string');
+              }
+              const match = ownershipPattern.exec(body);
+              if (!match) {
+                throw new Error('status marker does not match the fixed ownership format');
+              }
+              if (match[1] !== expectedKind) {
+                throw new Error(`status marker kind mismatch: ${match[1]} != ${expectedKind}`);
+              }
+              return {
+                kind: match[1],
+                requestOrder: positiveSafeInteger(match[2], 'request_order'),
+                runId: positiveSafeInteger(match[3], 'run_id'),
+                runAttempt: positiveSafeInteger(match[4], 'run_attempt'),
+              };
+            };
+
+            const requestKind = process.env.REQUEST_KIND;
+            if (requestKind !== 'comment' && requestKind !== 'push') {
+              core.setFailed(`Invalid request_kind: ${JSON.stringify(requestKind)}`);
+              return;
+            }
+            if (requestKind === 'push') {
+              core.setOutput('should_run', 'true');
+              core.setOutput('status_comment_id', '');
+              return;
+            }
+
+            let prNumber;
+            let requestOrder;
+            let runId;
+            let runAttempt;
+            try {
+              prNumber = positiveSafeInteger(process.env.PR_NUMBER, 'pr_number');
+              requestOrder = positiveSafeInteger(process.env.REQUEST_ORDER, 'request_order');
+              runId = positiveSafeInteger(process.env.GITHUB_RUN_ID, 'run_id');
+              runAttempt = positiveSafeInteger(process.env.GITHUB_RUN_ATTEMPT, 'run_attempt');
+              if (requestKind === 'comment') {
+                const commentOrder =
+                  positiveSafeInteger(process.env.COMMENT_ID, 'comment_id');
+                if (commentOrder !== requestOrder) {
+                  throw new Error('comment request order must equal comment_id');
+                }
+              } else if (process.env.COMMENT_ID !== '') {
+                throw new Error('push request must not carry a comment_id');
+              }
+              if (!/^[0-9a-f]{40}$/.test(process.env.BASE_SHA) ||
+                  !/^[0-9a-f]{40}$/.test(process.env.HEAD_SHA)) {
+                throw new Error('frozen base/head SHA is invalid');
+              }
+              if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/.test(process.env.BASE_REF) ||
+                  process.env.BASE_REF.includes('..') || process.env.BASE_REF.includes('//') ||
+                  process.env.BASE_REF.includes('@{') || process.env.BASE_REF.endsWith('.') ||
+                  process.env.BASE_REF.endsWith('/') || process.env.BASE_REF.endsWith('.lock') ||
+                  process.env.BASE_REF.split('/').some(part => !part || part.startsWith('.')) ||
+                  /[\0\r\n]/.test(process.env.BASE_REF)) {
+                throw new Error('frozen base ref is invalid');
+              }
+              const expectedRequestKey = requestKind === 'comment'
+                ? `comment-${process.env.COMMENT_ID}`
+                : `push-${process.env.HEAD_SHA}`;
+              const expectedTriggerLabel = requestKind === 'comment'
+                ? `@ppu-regression (comment #${process.env.COMMENT_ID})`
+                : `push to \`feature/ci-testing-dev\` @ \`${process.env.HEAD_SHA.substring(0, 8)}\``;
+              if (process.env.REQUEST_KEY !== expectedRequestKey ||
+                  process.env.TRIGGER_LABEL !== expectedTriggerLabel) {
+                throw new Error('request display metadata is inconsistent');
+              }
+            } catch (error) {
+              core.setFailed(`Invalid claim inputs: ${error}`);
+              return;
+            }
+
+            const ownershipMarker =
+              `<!-- ppu-perf-regression-890p kind=${requestKind} request_order=${requestOrder} run_id=${runId} run_attempt=${runAttempt} -->`;
+            const runUrl =
+              `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${runId}`;
+            const triggerLabel = process.env.TRIGGER_LABEL || `(${requestKind})`;
+            const body = [
+              ownershipMarker,
+              '## PPU 890P Performance Regression',
+              '',
+              `**Status:** Running — [view workflow](${runUrl})`,
+              `**Triggered by:** ${triggerLabel}`,
+              `**Base:** \`${process.env.BASE_REF}\` @ \`${process.env.BASE_SHA.substring(0, 8)}\``,
+              `**Head:** \`${process.env.HEAD_SHA.substring(0, 8)}\``,
+              `**Image:** \`${process.env.PPU_IMAGE}\``,
+              '',
+              '_Results will be updated here when complete._',
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const slotPattern = kindNamespacePattern(requestKind);
+            const candidates = comments.filter(comment =>
+              isTrustedBot(comment) && typeof comment.body === 'string' &&
+              slotPattern.test(comment.body));
+            if (candidates.length > 1) {
+              core.setFailed('Multiple bot status markers found; refusing ambiguous ownership');
+              return;
+            }
+
+            let existing = null;
+            let currentOwnership = null;
+            if (candidates.length === 1) {
+              existing = candidates[0];
+              try {
+                positiveSafeInteger(String(existing.id), 'status_comment_id');
+                currentOwnership = parseOwnership(existing.body, requestKind);
+              } catch (error) {
+                core.setFailed(`Malformed bot status marker: ${error}`);
+                return;
+              }
+            }
+
+            if (currentOwnership?.requestOrder > requestOrder) {
+              core.notice('A higher request order already owns the status comment; skipping');
+              return;
+            }
+            if (currentOwnership?.requestOrder === requestOrder) {
+              if (currentOwnership.runId !== runId) {
+                core.setFailed('The same request order is associated with a different run ID');
+                return;
+              }
+              if (currentOwnership.runAttempt > runAttempt) {
+                core.notice('A higher run attempt already owns this request; skipping');
+                return;
+              }
+            }
+
+            let statusCommentId;
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              statusCommentId = existing.id;
+            } else {
+              const { data: created } = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+              try {
+                positiveSafeInteger(String(created.id), 'status_comment_id');
+              } catch (error) {
+                core.setFailed(`Invalid created status comment: ${error}`);
+                return;
+              }
+              statusCommentId = created.id;
+            }
+
+            core.setOutput('status_comment_id', String(statusCommentId));
+            core.setOutput('should_run', 'true');
+
+  # Build the exact merge snapshot and run the repository gate with read-only access.
+  pre-commit-lint:
+    name: Quick Lint
+    needs: [resolve-pr, claim-request]
+    if: needs.claim-request.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      new_tree: ${{ steps.snapshot.outputs.new_tree }}
+    concurrency:
+      group: "ppu-perf-890p-pr-${{ needs.resolve-pr.outputs.pr_number }}"
+      cancel-in-progress: true
+    steps:
+      - name: Checkout frozen PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve-pr.outputs.head_sha }}
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Construct frozen merge snapshot
+        id: snapshot
+        shell: bash
+        env:
+          BASE_SHA: ${{ needs.resolve-pr.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.resolve-pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          SHA_RE='^[0-9a-f]{40}$'
+          [[ "$BASE_SHA" =~ $SHA_RE ]] && [[ "$HEAD_SHA" =~ $SHA_RE ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git fetch --no-tags --force "https://github.com/${GITHUB_REPOSITORY}.git" "$BASE_SHA"
+          test "$(git rev-parse "${BASE_SHA}^{commit}")" = "$BASE_SHA"
+          test "$(git rev-parse "${HEAD_SHA}^{commit}")" = "$HEAD_SHA"
+          git checkout --detach "$BASE_SHA"
+          if ! git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              merge --no-ff --no-edit "$HEAD_SHA"; then
+            git merge --abort || true
+            echo "Frozen base/head merge conflict; refusing to run PR code."
+            exit 1
+          fi
+          test "$(git rev-parse HEAD^1)" = "$BASE_SHA"
+          test "$(git rev-parse HEAD^2)" = "$HEAD_SHA"
+          git submodule sync --recursive
+          git submodule update --init --recursive
+          test -z "$(git status --porcelain --untracked-files=no --ignore-submodules=none)"
+          NEW_TREE="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$NEW_TREE" =~ $SHA_RE ]]
+          echo "Frozen base: $BASE_SHA"
+          echo "Frozen head: $HEAD_SHA"
+          echo "Local merge: $(git rev-parse HEAD)"
+          echo "NEW tree: $NEW_TREE"
+          echo "new_tree=$NEW_TREE" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Check AST with Python 3.10
+        run: python -m compileall -q -f tilelang
+
+      - name: Pre-commit Lint
+        run: pipx run pre-commit run --all-files --color=always --show-diff-on-failure
+
+  # Reconstruct the same frozen snapshot with read-only permissions and no sensitive inputs.
+  ppu-perf:
+    name: 890P Perf Regression
+    needs: [resolve-pr, claim-request, pre-commit-lint]
+    if: needs.claim-request.outputs.should_run == 'true'
+    runs-on: k8s-runner-group-cpu-thead
+    container:
+      image: ghcr.io/actions/actions-runner:latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    concurrency:
+      group: "ppu-perf-890p-pr-${{ needs.resolve-pr.outputs.pr_number }}"
+      cancel-in-progress: true
+    env:
+      PR_NUMBER: ${{ needs.resolve-pr.outputs.pr_number }}
+      BASE_REF: ${{ needs.resolve-pr.outputs.base_ref }}
+      BASE_SHA: ${{ needs.resolve-pr.outputs.base_sha }}
+      HEAD_SHA: ${{ needs.resolve-pr.outputs.head_sha }}
+      COMMENT_ID: ${{ needs.resolve-pr.outputs.comment_id }}
+      REQUEST_KIND: ${{ needs.resolve-pr.outputs.request_kind }}
+      REQUEST_ORDER: ${{ needs.resolve-pr.outputs.request_order }}
+      REQUEST_KEY: ${{ needs.resolve-pr.outputs.request_key }}
+      TRIGGER_LABEL: ${{ needs.resolve-pr.outputs.trigger_label }}
+      EXPECTED_NEW_TREE: ${{ needs.pre-commit-lint.outputs.new_tree }}
+    steps:
+      - name: Checkout frozen PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve-pr.outputs.head_sha }}
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Construct frozen merge snapshot
+        id: snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA_RE='^[0-9a-f]{40}$'
+          [[ "$BASE_SHA" =~ $SHA_RE ]] && [[ "$HEAD_SHA" =~ $SHA_RE ]]
+          [[ "$EXPECTED_NEW_TREE" =~ $SHA_RE ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git fetch --no-tags --force "https://github.com/${GITHUB_REPOSITORY}.git" "$BASE_SHA"
+          test "$(git rev-parse "${BASE_SHA}^{commit}")" = "$BASE_SHA"
+          test "$(git rev-parse "${HEAD_SHA}^{commit}")" = "$HEAD_SHA"
+          git checkout --detach "$BASE_SHA"
+          if ! git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              merge --no-ff --no-edit "$HEAD_SHA"; then
+            git merge --abort || true
+            echo "Frozen base/head merge conflict; refusing to run PR code."
+            exit 1
+          fi
+          test "$(git rev-parse HEAD^1)" = "$BASE_SHA"
+          test "$(git rev-parse HEAD^2)" = "$HEAD_SHA"
+          git submodule sync --recursive
+          git submodule update --init --recursive
+          test -z "$(git status --porcelain --untracked-files=no --ignore-submodules=none)"
+          NEW_TREE="$(git rev-parse 'HEAD^{tree}')"
+          [[ "$NEW_TREE" =~ $SHA_RE ]]
+          test "$NEW_TREE" = "$EXPECTED_NEW_TREE"
+          echo "Frozen base: $BASE_SHA"
+          echo "Frozen head: $HEAD_SHA"
+          echo "Local merge: $(git rev-parse HEAD)"
+          echo "NEW tree: $NEW_TREE"
+          echo "new_tree=$NEW_TREE" >> "$GITHUB_OUTPUT"
+
+      - name: Run perf benchmarks on PPU pod
+        id: ppu-bench
+        uses: t-head/ppu-scheduler-action@aac83e464f2a3fcbddddc60c8016021c996092a6
+        with:
+          image: ${{ env.PPU_IMAGE }}
+          nnodes: 0
+          nproc_per_node: 1
+          node_selector: "board-type=ZW-M890P"
+          namespace: ppu-sched
+          host_volumes: /nas_aisw:/nas_aisw,/wl_nas:/mnt/wl_nas
+          # Scheduler contract: comma-separated KEY=VALUE entries without spaces.
+          extra_env: BASE_SHA=${{ env.BASE_SHA }},HEAD_SHA=${{ env.HEAD_SHA }},BASE_REF=${{ env.BASE_REF }},PR_NUMBER=${{ env.PR_NUMBER }},COMMENT_ID=${{ env.COMMENT_ID }},REQUEST_KIND=${{ env.REQUEST_KIND }},REQUEST_ORDER=${{ env.REQUEST_ORDER }},NEW_TREE=${{ steps.snapshot.outputs.new_tree }},GITHUB_RUN_ID=${{ github.run_id }},GITHUB_RUN_ATTEMPT=${{ github.run_attempt }}
+          timeout_minutes: 300
+          command: |
+            set -euo pipefail
+            git config --global --add safe.directory '*'
+
+            source /usr/local/PPU_SDK/envsetup.sh
+            unset PIP_INDEX_URL
+            git config --global --unset-all url.https://ai-gerrit.eng.t-head.cn/Public/Github/.insteadOf 2>/dev/null || true
+
+            WORKSPACE="/workspace"
+            NEW_SRC="$WORKSPACE/source"
+            OLD_SRC="$WORKSPACE/old_source"
+            NAS_OUT="/mnt/wl_nas/devops/tilelang-ci/perf-regression/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/ZW-M890P"
+            MANIFEST="$NEW_SRC/maint/scripts/ppu_perf_890p_allowlist.yaml"
+            FILE_TIMEOUT=600
+            GATE_RC=0
+            SHA_RE='^[0-9a-f]{40}$'
+
+            [[ "$BASE_SHA" =~ $SHA_RE ]] && [[ "$HEAD_SHA" =~ $SHA_RE ]] && [[ "$NEW_TREE" =~ $SHA_RE ]]
+            cd "$NEW_SRC"
+            test "$(git rev-parse HEAD^1)" = "$BASE_SHA"
+            test "$(git rev-parse HEAD^2)" = "$HEAD_SHA"
+            test "$(git rev-parse 'HEAD^{tree}')" = "$NEW_TREE"
+            test -z "$(git status --porcelain --untracked-files=no --ignore-submodules=none)"
+            echo "Verified NEW snapshot: base=$BASE_SHA head=$HEAD_SHA tree=$NEW_TREE"
+            mkdir -p "$NAS_OUT"
+
+            pip install wheel build setuptools cython packaging 'setuptools==68.1.2' \
+              pytest==9.0.0 pyyaml==6.0.3 junit-xml einops==0.8.1 ninja==1.13.0 \
+              mkl==2021.4.0 cuda-bindings==13.0 'z3-solver>=4.13.0,<4.15.5' tabulate matplotlib
+            yes | pip uninstall nvidia-cuda-nvrtc 2>/dev/null || true
+            pip install flash-attn 2>/dev/null || echo "[WARN] flash-attn not available"
+            apt-get update && apt-get install -y libopenmpi-dev 2>/dev/null || true
+
+            echo "::group::Build NEW wheel"
+            python -m venv --system-site-packages "$WORKSPACE/venv_new"
+            NEW_BUILD_DIR="$WORKSPACE/build_new"
+            mkdir -p "$NEW_BUILD_DIR"
+            NO_VERSION_LABEL=OFF NO_GIT_VERSION=1 \
+              TILELANG_BUILD_DIR="$NEW_BUILD_DIR" \
+              python -m build --wheel || { echo "[FATAL] NEW wheel build failed"; exit 1; }
+            source "$WORKSPACE/venv_new/bin/activate"
+            pip install "$NEW_SRC"/dist/*.whl
+            pip install pytest pyyaml==6.0.3 tabulate matplotlib einops
+            deactivate
+            echo "::endgroup::"
+
+            echo "::group::Build OLD wheel (base SHA: $BASE_SHA)"
+            git clone "$NEW_SRC" "$OLD_SRC"
+            cd "$OLD_SRC"
+            git checkout --detach "$BASE_SHA"
+            test "$(git rev-parse HEAD)" = "$BASE_SHA"
+            git submodule update --init --recursive
+            test -z "$(git status --porcelain --untracked-files=no --ignore-submodules=none)"
+            echo "Verified OLD snapshot: $BASE_SHA"
+
+            python -m venv --system-site-packages "$WORKSPACE/venv_old"
+            OLD_BUILD_DIR="$WORKSPACE/build_old"
+            mkdir -p "$OLD_BUILD_DIR"
+            NO_VERSION_LABEL=OFF NO_GIT_VERSION=1 \
+              TILELANG_BUILD_DIR="$OLD_BUILD_DIR" \
+              python -m build --wheel || { echo "[FATAL] OLD wheel build failed"; exit 1; }
+            source "$WORKSPACE/venv_old/bin/activate"
+            pip install "$OLD_SRC"/dist/*.whl
+            pip install pytest pyyaml==6.0.3 tabulate matplotlib einops
+            deactivate
+            echo "::endgroup::"
+
+            export TILELANG_DISABLE_CACHE=1
+            export TRITON_CACHE_DIR_OLD="$WORKSPACE/triton_cache_old"
+            export TRITON_CACHE_DIR_NEW="$WORKSPACE/triton_cache_new"
+            export TORCH_EXTENSIONS_DIR_OLD="$WORKSPACE/torch_ext_old"
+            export TORCH_EXTENSIONS_DIR_NEW="$WORKSPACE/torch_ext_new"
+            mkdir -p "$TRITON_CACHE_DIR_OLD" "$TRITON_CACHE_DIR_NEW" \
+                     "$TORCH_EXTENSIONS_DIR_OLD" "$TORCH_EXTENSIONS_DIR_NEW"
+
+            echo "::group::Run OLD benchmarks"
+            cd "$NEW_SRC"
+            source "$WORKSPACE/venv_old/bin/activate"
+            export TRITON_CACHE_DIR="$TRITON_CACHE_DIR_OLD"
+            export TORCH_EXTENSIONS_DIR="$TORCH_EXTENSIONS_DIR_OLD"
+            OLD_RC=0
+            python maint/scripts/ppu_run_regression.py \
+              --manifest "$MANIFEST" \
+              --timeout "$FILE_TIMEOUT" \
+              --repo-root "$OLD_SRC" \
+              --output "$NAS_OUT/old_payload.json" || OLD_RC=$?
+            echo "OLD runner exit code: $OLD_RC"
+            deactivate
+            echo "::endgroup::"
+
+            echo "::group::Run NEW benchmarks"
+            source "$WORKSPACE/venv_new/bin/activate"
+            export TRITON_CACHE_DIR="$TRITON_CACHE_DIR_NEW"
+            export TORCH_EXTENSIONS_DIR="$TORCH_EXTENSIONS_DIR_NEW"
+            NEW_RC=0
+            python maint/scripts/ppu_run_regression.py \
+              --manifest "$MANIFEST" \
+              --timeout "$FILE_TIMEOUT" \
+              --repo-root "$NEW_SRC" \
+              --output "$NAS_OUT/new_payload.json" || NEW_RC=$?
+            echo "NEW runner exit code: $NEW_RC"
+            deactivate
+            echo "::endgroup::"
+
+            echo "::group::Compare results"
+            source "$WORKSPACE/venv_new/bin/activate"
+            python maint/scripts/ppu_compare_regression.py \
+              --old "$NAS_OUT/old_payload.json" \
+              --new "$NAS_OUT/new_payload.json" \
+              --output-md "$NAS_OUT/regression_result.md" \
+              --output-json "$NAS_OUT/regression_compare.json" \
+              --output-png "$NAS_OUT/regression_result.png" \
+              || GATE_RC=$?
+            deactivate
+            echo "::endgroup::"
+
+            if [[ -f "$NAS_OUT/regression_result.md" ]]; then
+              cp "$NAS_OUT/regression_result.md" "$NAS_OUT/step_summary.md"
+            fi
+            printf '%s\n' "$GATE_RC" > "$NAS_OUT/gate_rc.txt"
+            echo "Gate exit code: $GATE_RC"
+            # Preserve artifacts for the host even when the final gate will fail.
+          cleanup_policy: always
+
+      - name: Fetch and validate results from NAS
+        if: always()
+        id: fetch-results
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          POSITIVE_INT_RE='^[1-9][0-9]{0,15}$'
+          [[ "$RUN_ID" =~ $POSITIVE_INT_RE ]]
+          [[ "$RUN_ATTEMPT" =~ $POSITIVE_INT_RE ]]
+          NAS_DIR="/wl_nas/devops/tilelang-ci/perf-regression/${RUN_ID}-${RUN_ATTEMPT}/ZW-M890P"
+          LOCAL_DIR="${GITHUB_WORKSPACE}/perf-results"
+          mkdir -p "$LOCAL_DIR"
+          python3 - "$NAS_DIR" "$LOCAL_DIR" "$GITHUB_OUTPUT" <<'PY'
+          import errno
+          import json
+          import os
+          import re
+          import stat
+          import sys
+          from pathlib import Path
+
+          source_dir = Path(sys.argv[1])
+          local_dir = Path(sys.argv[2])
+          github_output = Path(sys.argv[3])
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          expected_dir = workspace / "perf-results"
+          if local_dir != expected_dir or local_dir.is_symlink() or not local_dir.is_dir():
+              raise SystemExit("invalid local result directory")
+          if source_dir.is_symlink() or not source_dir.is_dir():
+              raise SystemExit("invalid NAS result directory")
+
+          limits = {
+              "regression_result.md": 56000,
+              "regression_result.png": 10 * 1024 * 1024,
+              "regression_compare.json": 10 * 1024 * 1024,
+              "old_payload.json": 50 * 1024 * 1024,
+              "new_payload.json": 50 * 1024 * 1024,
+              "step_summary.md": 56000,
+              "gate_rc.txt": 2,
+          }
+          contents = {}
+          nofollow = getattr(os, "O_NOFOLLOW", 0)
+          directory = getattr(os, "O_DIRECTORY", 0)
+          source_fd = os.open(source_dir, os.O_RDONLY | directory | nofollow)
+          local_fd = os.open(local_dir, os.O_RDONLY | directory | nofollow)
+          try:
+              if not stat.S_ISDIR(os.fstat(source_fd).st_mode):
+                  raise SystemExit("NAS result path is not a directory")
+              if not stat.S_ISDIR(os.fstat(local_fd).st_mode):
+                  raise SystemExit("local result path is not a directory")
+              for name, max_bytes in limits.items():
+                  try:
+                      source_stat = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+                  except FileNotFoundError:
+                      print("WARN: expected result file is unavailable")
+                      continue
+                  if not stat.S_ISREG(source_stat.st_mode):
+                      raise SystemExit(f"{name} is not a regular NAS file")
+                  try:
+                      fd = os.open(
+                          name,
+                          os.O_RDONLY | os.O_NONBLOCK | nofollow,
+                          dir_fd=source_fd,
+                      )
+                  except OSError as error:
+                      if error.errno == errno.ENOENT:
+                          print("WARN: expected result file is unavailable")
+                          continue
+                      raise
+                  try:
+                      opened_stat = os.fstat(fd)
+                      if not stat.S_ISREG(opened_stat.st_mode) or not 0 < opened_stat.st_size <= max_bytes:
+                          raise SystemExit(f"{name} has invalid NAS file type or size")
+                      chunks = []
+                      remaining = opened_stat.st_size
+                      while remaining:
+                          chunk = os.read(fd, min(remaining, 1024 * 1024))
+                          if not chunk:
+                              raise SystemExit(f"{name} changed while being read")
+                          chunks.append(chunk)
+                          remaining -= len(chunk)
+                      data = b"".join(chunks)
+                      if os.fstat(fd).st_size != opened_stat.st_size:
+                          raise SystemExit(f"{name} changed size while being read")
+                  finally:
+                      os.close(fd)
+                  contents[name] = data
+
+              gate_rc = "2"
+              if "gate_rc.txt" in contents:
+                  try:
+                      raw_gate_rc = contents["gate_rc.txt"].decode("ascii")
+                  except UnicodeDecodeError as error:
+                      raise SystemExit("gate_rc.txt is not strict ASCII") from error
+                  if re.fullmatch(r"[012]\n", raw_gate_rc) is None:
+                      raise SystemExit("gate_rc.txt is not an allowed canonical exit code")
+                  gate_rc = raw_gate_rc[0]
+
+              required = {
+                  "gate_rc.txt", "regression_result.md", "regression_result.png",
+                  "regression_compare.json", "old_payload.json", "new_payload.json",
+              }
+              if gate_rc in {"0", "1"} and not required.issubset(contents):
+                  raise SystemExit("successful comparison is missing required result files")
+              for name, data in contents.items():
+                  if name.endswith(".json"):
+                      try:
+                          document = json.loads(data.decode("utf-8"))
+                      except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                          raise SystemExit(f"{name} is not strict UTF-8 JSON") from error
+                      if not isinstance(document, dict):
+                          raise SystemExit(f"{name} top-level JSON value is not an object")
+                  elif name.endswith(".md"):
+                      try:
+                          text = data.decode("utf-8")
+                      except UnicodeDecodeError as error:
+                          raise SystemExit(f"{name} is not strict UTF-8") from error
+                      if re.search(r"[\x00\r\x01-\x08\x0b\x0c\x0e-\x1f\x7f]", text):
+                          raise SystemExit(f"{name} contains forbidden control characters")
+                  elif name.endswith(".png") and not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                      raise SystemExit(f"{name} is not a PNG file")
+
+                  flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
+                  destination_fd = os.open(name, flags, 0o600, dir_fd=local_fd)
+                  try:
+                      view = memoryview(data)
+                      while view:
+                          written = os.write(destination_fd, view)
+                          view = view[written:]
+                      os.fsync(destination_fd)
+                  finally:
+                      os.close(destination_fd)
+          finally:
+              os.close(local_fd)
+              os.close(source_fd)
+
+          result_dir = str(local_dir)
+          if len(result_dir.encode("utf-8")) > 4096 or "\n" in result_dir or "\r" in result_dir:
+              raise SystemExit("result directory is not safe for GITHUB_OUTPUT")
+          with github_output.open("a", encoding="utf-8", newline="\n") as output:
+              output.write(f"result_dir={result_dir}\n")
+              output.write(f"gate_rc={gate_rc}\n")
+          PY
+
+      - name: Write trusted publisher metadata
+        if: always()
+        shell: bash
+        env:
+          RESULT_DIR: ${{ steps.fetch-results.outputs.result_dir }}
+          NEW_TREE: ${{ steps.snapshot.outputs.new_tree }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import stat
+          from pathlib import Path
+
+          def strict_positive_int(name: str) -> int:
+              value = os.environ[name]
+              if re.fullmatch(r"[1-9][0-9]{0,15}", value) is None:
+                  raise SystemExit(f"{name} is not a canonical bounded positive integer")
+              return int(value)
+
+          def strict_sha(name: str) -> str:
+              value = os.environ[name]
+              if re.fullmatch(r"[0-9a-f]{40}", value) is None:
+                  raise SystemExit(f"{name} is not a full lowercase SHA")
+              return value
+
+          request_kind = os.environ["REQUEST_KIND"]
+          if request_kind not in ("comment", "push"):
+              raise SystemExit("Invalid REQUEST_KIND enum")
+          raw_comment_id = os.environ["COMMENT_ID"]
+          if request_kind == "comment":
+              if re.fullmatch(r"[1-9][0-9]{0,15}", raw_comment_id) is None:
+                  raise SystemExit("COMMENT_ID is not a canonical bounded positive integer")
+              comment_id = int(raw_comment_id)
+          elif raw_comment_id != "":
+              raise SystemExit("push request must not carry a comment_id")
+          else:
+              comment_id = None
+          result_dir = Path(os.environ["RESULT_DIR"])
+          expected_dir = Path(os.environ["GITHUB_WORKSPACE"]) / "perf-results"
+          if result_dir != expected_dir or result_dir.is_symlink():
+              raise SystemExit("RESULT_DIR does not match the trusted workspace path")
+          result_dir.mkdir(parents=True, exist_ok=True)
+
+          limits = {
+              "gate_rc.txt": 2,
+              "regression_result.md": 56000,
+              "regression_result.png": 10 * 1024 * 1024,
+              "regression_compare.json": 10 * 1024 * 1024,
+              "old_payload.json": 50 * 1024 * 1024,
+              "new_payload.json": 50 * 1024 * 1024,
+          }
+          nofollow = getattr(os, "O_NOFOLLOW", 0)
+          directory = getattr(os, "O_DIRECTORY", 0)
+          result_fd = os.open(result_dir, os.O_RDONLY | directory | nofollow)
+          contents = {}
+          try:
+              for name, max_bytes in limits.items():
+                  fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=result_fd)
+                  try:
+                      opened_stat = os.fstat(fd)
+                      if not stat.S_ISREG(opened_stat.st_mode) or not 0 < opened_stat.st_size <= max_bytes:
+                          raise SystemExit(f"{name} has invalid type or size before metadata generation")
+                      chunks = []
+                      remaining = opened_stat.st_size
+                      while remaining:
+                          chunk = os.read(fd, min(remaining, 1024 * 1024))
+                          if not chunk:
+                              raise SystemExit(f"{name} changed while generating metadata")
+                          chunks.append(chunk)
+                          remaining -= len(chunk)
+                      contents[name] = b"".join(chunks)
+                      if os.fstat(fd).st_size != opened_stat.st_size:
+                          raise SystemExit(f"{name} changed size while generating metadata")
+                  finally:
+                      os.close(fd)
+
+              try:
+                  gate_rc = contents["gate_rc.txt"].decode("ascii")
+              except UnicodeDecodeError as error:
+                  raise SystemExit("gate_rc.txt is not strict ASCII") from error
+              if re.fullmatch(r"[01]\n", gate_rc) is None:
+                  raise SystemExit("publisher metadata requires a completed canonical gate result")
+
+              metadata = {
+                  "schema_version": 3,
+                  "pr_number": strict_positive_int("PR_NUMBER"),
+                  "request_kind": request_kind,
+                  "request_order": strict_positive_int("REQUEST_ORDER"),
+                  "comment_id": comment_id,
+                  "base_ref": os.environ["BASE_REF"],
+                  "base_sha": strict_sha("BASE_SHA"),
+                  "head_sha": strict_sha("HEAD_SHA"),
+                  "new_tree": strict_sha("NEW_TREE"),
+                  "run_id": str(strict_positive_int("RUN_ID")),
+                  "run_attempt": strict_positive_int("RUN_ATTEMPT"),
+                  "gate_rc": gate_rc[0],
+                  "artifact_sha256": {
+                      name: hashlib.sha256(data).hexdigest()
+                      for name, data in contents.items()
+                  },
+              }
+              if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}", metadata["base_ref"])
+                      or ".." in metadata["base_ref"] or "//" in metadata["base_ref"]
+                      or "@{" in metadata["base_ref"] or metadata["base_ref"].endswith((".", "/", ".lock"))
+                      or any(part.startswith(".") for part in metadata["base_ref"].split("/"))):
+                  raise SystemExit("BASE_REF is outside the safe branch-name subset")
+              encoded = (json.dumps(metadata, sort_keys=True) + "\n").encode("utf-8")
+              metadata_fd = os.open(
+                  "publisher_metadata.json",
+                  os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+                  0o600,
+                  dir_fd=result_fd,
+              )
+              try:
+                  view = memoryview(encoded)
+                  while view:
+                      written = os.write(metadata_fd, view)
+                      view = view[written:]
+                  os.fsync(metadata_fd)
+              finally:
+                  os.close(metadata_fd)
+          finally:
+              os.close(result_fd)
+          PY
+
+      - name: Write step summary
+        if: always()
+        shell: bash
+        env:
+          RESULT_DIR: ${{ steps.fetch-results.outputs.result_dir }}
+        run: |
+          set -euo pipefail
+          EXPECTED_RESULT_DIR="${GITHUB_WORKSPACE}/perf-results"
+          test "$RESULT_DIR" = "$EXPECTED_RESULT_DIR"
+          COMPARE_JSON="$RESULT_DIR/regression_compare.json"
+          if [[ ! -f "$COMPARE_JSON" ]] || ! python3 - "$COMPARE_JSON" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1]) as f:
+              gate = json.load(f).get("gate")
+          if not isinstance(gate, dict) or not isinstance(gate.get("correctness_ok"), bool):
+              raise SystemExit(1)
+          PY
+          then
+            echo "## Infrastructure failure" >> "$GITHUB_STEP_SUMMARY"
+            echo "Performance gate JSON is missing or invalid; this run is fail-closed." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -f "$RESULT_DIR/step_summary.md" ]]; then
+            cat "$RESULT_DIR/step_summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Infrastructure failure" >> "$GITHUB_STEP_SUMMARY"
+            echo "Performance report is missing; this run is fail-closed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload publisher artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ppu-perf-regression-890p-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.fetch-results.outputs.result_dir }}/publisher_metadata.json
+            ${{ steps.fetch-results.outputs.result_dir }}/gate_rc.txt
+            ${{ steps.fetch-results.outputs.result_dir }}/regression_result.md
+            ${{ steps.fetch-results.outputs.result_dir }}/regression_result.png
+            ${{ steps.fetch-results.outputs.result_dir }}/regression_compare.json
+            ${{ steps.fetch-results.outputs.result_dir }}/old_payload.json
+            ${{ steps.fetch-results.outputs.result_dir }}/new_payload.json
+          if-no-files-found: error
+
+      - name: Gate verdict
+        if: always()
+        shell: bash
+        env:
+          RESULT_DIR: ${{ steps.fetch-results.outputs.result_dir }}
+          GATE_RC: ${{ steps.fetch-results.outputs.gate_rc }}
+        run: |
+          set -euo pipefail
+          EXPECTED_RESULT_DIR="${GITHUB_WORKSPACE}/perf-results"
+          test "$RESULT_DIR" = "$EXPECTED_RESULT_DIR"
+          [[ "$GATE_RC" =~ ^[012]$ ]]
+          COMPARE_JSON="$RESULT_DIR/regression_compare.json"
+          echo "Gate exit code: $GATE_RC"
+          if [[ ! -f "$COMPARE_JSON" ]] || ! python3 - "$COMPARE_JSON" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1]) as f:
+              gate = json.load(f).get("gate")
+          if not isinstance(gate, dict) or gate.get("correctness_ok") is not True:
+              raise SystemExit(1)
+          PY
+          then
+            echo "FAIL: Gate JSON is missing, invalid, or reports a correctness failure."
+            exit 1
+          fi
+          if [[ "$GATE_RC" == "0" ]]; then
+            echo "PASS: No correctness failures."
+          elif [[ "$GATE_RC" == "1" ]]; then
+            echo "FAIL: Correctness failure detected."
+            exit 1
+          elif [[ "$GATE_RC" == "2" ]]; then
+            echo "FAIL: Schema/usage error or results not available."
+            exit 1
+          else
+            echo "FAIL: Unknown gate result ($GATE_RC)."
+            exit 1
+          fi
+
+  # Serialized result writer; it never checks out or executes PR code.
+  publish-result:
+    name: Publish Result
+    needs: [resolve-pr, claim-request, pre-commit-lint, ppu-perf]
+    if: >-
+      always() &&
+      needs.resolve-pr.result == 'success' &&
+      needs.claim-request.result == 'success' &&
+      needs.claim-request.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    concurrency:
+      group: "ppu-perf-890p-status-pr-${{ needs.resolve-pr.outputs.pr_number }}-${{ needs.resolve-pr.outputs.request_kind }}"
+      cancel-in-progress: false
+    env:
+      PR_NUMBER: ${{ needs.resolve-pr.outputs.pr_number }}
+      BASE_REF: ${{ needs.resolve-pr.outputs.base_ref }}
+      BASE_SHA: ${{ needs.resolve-pr.outputs.base_sha }}
+      HEAD_SHA: ${{ needs.resolve-pr.outputs.head_sha }}
+      COMMENT_ID: ${{ needs.resolve-pr.outputs.comment_id }}
+      REQUEST_KIND: ${{ needs.resolve-pr.outputs.request_kind }}
+      REQUEST_ORDER: ${{ needs.resolve-pr.outputs.request_order }}
+      REQUEST_KEY: ${{ needs.resolve-pr.outputs.request_key }}
+      TRIGGER_LABEL: ${{ needs.resolve-pr.outputs.trigger_label }}
+      STATUS_COMMENT_ID: ${{ needs.claim-request.outputs.status_comment_id }}
+      EXPECTED_NEW_TREE: ${{ needs.pre-commit-lint.outputs.new_tree }}
+      LINT_RESULT: ${{ needs.pre-commit-lint.result }}
+      PPU_RESULT: ${{ needs.ppu-perf.result }}
+      ARTIFACT_DIR: ${{ github.workspace }}/publisher-artifact
+    steps:
+      - name: Download exact current-run artifact
+        if: >-
+          always() &&
+          (needs.ppu-perf.result == 'success' || needs.ppu-perf.result == 'failure')
+        uses: actions/download-artifact@v8
+        with:
+          name: ppu-perf-regression-890p-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACT_DIR }}
+
+      - name: Validate artifact and publish result
+        if: always()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const crypto = require('crypto');
+
+            const ownershipPattern = /^<!-- ppu-perf-regression-890p kind=(comment|push) request_order=([1-9][0-9]*) run_id=([1-9][0-9]*) run_attempt=([1-9][0-9]*) -->\n/;
+            const shaPattern = /^[0-9a-f]{40}$/;
+            const positiveSafeInteger = (value, label) => {
+              if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)) {
+                throw new Error(`${label} is not a canonical positive integer`);
+              }
+              const parsed = Number(value);
+              if (!Number.isSafeInteger(parsed)) {
+                throw new Error(`${label} exceeds the safe integer range`);
+              }
+              return parsed;
+            };
+            const parseOwnership = (body, expectedKind) => {
+              if (typeof body !== 'string' || Buffer.byteLength(body, 'utf8') > 65536 ||
+                  /[\0\r]/.test(body)) {
+                throw new Error('status marker body is not a bounded safe string');
+              }
+              const match = ownershipPattern.exec(body);
+              if (!match) {
+                throw new Error('status marker does not match the fixed ownership format');
+              }
+              if (match[1] !== expectedKind) {
+                throw new Error(`status marker kind mismatch: ${match[1]} != ${expectedKind}`);
+              }
+              return {
+                kind: match[1],
+                requestOrder: positiveSafeInteger(match[2], 'request_order'),
+                runId: positiveSafeInteger(match[3], 'run_id'),
+                runAttempt: positiveSafeInteger(match[4], 'run_attempt'),
+              };
+            };
+
+            const requestKind = process.env.REQUEST_KIND;
+            if (requestKind !== 'comment' && requestKind !== 'push') {
+              core.setFailed(`Invalid REQUEST_KIND: ${JSON.stringify(requestKind)}`);
+              return;
+            }
+
+            let prNumber;
+            let requestOrder;
+            let statusCommentId;
+            let runId;
+            let runAttempt;
+            let commentId = null;
+            try {
+              prNumber = positiveSafeInteger(process.env.PR_NUMBER, 'pr_number');
+              requestOrder = positiveSafeInteger(process.env.REQUEST_ORDER, 'request_order');
+              statusCommentId = process.env.STATUS_COMMENT_ID === ''
+                ? null
+                : positiveSafeInteger(process.env.STATUS_COMMENT_ID, 'status_comment_id');
+              runId = positiveSafeInteger(process.env.GITHUB_RUN_ID, 'run_id');
+              runAttempt = positiveSafeInteger(process.env.GITHUB_RUN_ATTEMPT, 'run_attempt');
+              if (requestKind === 'comment') {
+                commentId = positiveSafeInteger(process.env.COMMENT_ID, 'comment_id');
+                if (commentId !== requestOrder) {
+                  throw new Error('comment request order must equal comment_id');
+                }
+              } else if (process.env.COMMENT_ID !== '') {
+                throw new Error('push request must not carry a comment_id');
+              }
+              if (!shaPattern.test(process.env.BASE_SHA) ||
+                  !shaPattern.test(process.env.HEAD_SHA)) {
+                throw new Error('frozen base/head SHA is invalid');
+              }
+              if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/.test(process.env.BASE_REF) ||
+                  process.env.BASE_REF.includes('..') || process.env.BASE_REF.includes('//') ||
+                  process.env.BASE_REF.includes('@{') || process.env.BASE_REF.endsWith('.') ||
+                  process.env.BASE_REF.endsWith('/') || process.env.BASE_REF.endsWith('.lock') ||
+                  process.env.BASE_REF.split('/').some(part => !part || part.startsWith('.')) ||
+                  /[\0\r\n]/.test(process.env.BASE_REF)) {
+                throw new Error('frozen base ref is invalid');
+              }
+              const expectedRequestKey = requestKind === 'comment'
+                ? `comment-${process.env.COMMENT_ID}`
+                : `push-${process.env.HEAD_SHA}`;
+              const expectedTriggerLabel = requestKind === 'comment'
+                ? `@ppu-regression (comment #${process.env.COMMENT_ID})`
+                : `push to \`feature/ci-testing-dev\` @ \`${process.env.HEAD_SHA.substring(0, 8)}\``;
+              if (process.env.REQUEST_KEY !== expectedRequestKey ||
+                  process.env.TRIGGER_LABEL !== expectedTriggerLabel) {
+                throw new Error('request display metadata is inconsistent');
+              }
+              if (process.env.GITHUB_REPOSITORY !== 't-head/tilelang-for-sail' ||
+                  process.env.GITHUB_SERVER_URL !== 'https://github.com') {
+                throw new Error('unexpected GitHub repository or server URL');
+              }
+              if (!['success', 'failure', 'cancelled', 'skipped'].includes(
+                    process.env.LINT_RESULT) ||
+                  !['success', 'failure', 'cancelled', 'skipped'].includes(
+                    process.env.PPU_RESULT)) {
+                throw new Error('job result metadata is outside the GitHub result enum');
+              }
+            } catch (error) {
+              core.setFailed(`Invalid frozen metadata from trusted job outputs: ${error}`);
+              return;
+            }
+
+            const ownershipMarker =
+              `<!-- ppu-perf-regression-890p kind=${requestKind} request_order=${requestOrder} run_id=${runId} run_attempt=${runAttempt} -->`;
+            const runUrl =
+              `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${runId}`;
+            const triggerLabel = process.env.TRIGGER_LABEL;
+            const artifactDir = process.env.ARTIFACT_DIR;
+            const expectedArtifactDir = path.join(process.env.GITHUB_WORKSPACE, 'publisher-artifact');
+            if (artifactDir !== expectedArtifactDir || /[\0\r\n]/.test(artifactDir) ||
+                process.env.PPU_IMAGE !==
+                  'download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.10.0-ubuntu24.04-hggcrt3-py312-20261005') {
+              core.setFailed('Publisher path or image metadata is not trusted');
+              return;
+            }
+
+            let report = '';
+            let gate = null;
+            let gateRc = null;
+            let artifactValidationFailed = false;
+            const requiresArtifact = process.env.LINT_RESULT === 'success' &&
+              (process.env.PPU_RESULT === 'success' || process.env.PPU_RESULT === 'failure');
+            const hashedArtifactFiles = [
+              'gate_rc.txt', 'regression_result.md', 'regression_result.png',
+              'regression_compare.json', 'old_payload.json', 'new_payload.json',
+            ];
+            const expectedArtifactFiles = new Set([
+              'publisher_metadata.json', ...hashedArtifactFiles,
+            ]);
+            const artifactLimits = new Map([
+              ['publisher_metadata.json', 32768], ['gate_rc.txt', 2],
+              ['regression_result.md', 56000],
+              ['regression_result.png', 10 * 1024 * 1024],
+              ['regression_compare.json', 10 * 1024 * 1024],
+              ['old_payload.json', 50 * 1024 * 1024],
+              ['new_payload.json', 50 * 1024 * 1024],
+            ]);
+            const artifactBuffers = new Map();
+            const readRegularBuffer = (name, maxBytes) => {
+              if (artifactBuffers.has(name)) return artifactBuffers.get(name);
+              if (!expectedArtifactFiles.has(name) || path.basename(name) !== name) {
+                throw new Error('attempted to read an unexpected artifact path');
+              }
+              const filePath = path.join(artifactDir, name);
+              const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
+              const fd = fs.openSync(filePath, flags);
+              try {
+                const stat = fs.fstatSync(fd);
+                if (!stat.isFile() || stat.size <= 0 || stat.size > maxBytes) {
+                  throw new Error(`${name} has an invalid type or size (${stat.size})`);
+                }
+                const buffer = Buffer.alloc(stat.size);
+                let offset = 0;
+                while (offset < buffer.length) {
+                  const count = fs.readSync(fd, buffer, offset, buffer.length - offset, offset);
+                  if (count === 0) throw new Error(`${name} changed while being read`);
+                  offset += count;
+                }
+                if (fs.fstatSync(fd).size !== stat.size) {
+                  throw new Error(`${name} changed size while being read`);
+                }
+                artifactBuffers.set(name, buffer);
+                return buffer;
+              } finally {
+                fs.closeSync(fd);
+              }
+            };
+            const readRegularFile = (name, maxBytes) =>
+              new TextDecoder('utf-8', { fatal: true }).decode(readRegularBuffer(name, maxBytes));
+            const exactKeys = (value, expected, label) => {
+              if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                throw new Error(`${label} is not an object`);
+              }
+              const actual = Object.keys(value).sort();
+              const wanted = [...expected].sort();
+              if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+                throw new Error(`${label} fields do not match the trusted schema`);
+              }
+            };
+            const boundedString = (
+              value, label, maxBytes = 4096, allowNewlines = false,
+            ) => {
+              const forbidden = allowNewlines
+                ? /[\0\r\x01-\x08\x0b\x0c\x0e-\x1f\x7f]/
+                : /[\0\r\n\x01-\x08\x0b\x0c\x0e-\x1f\x7f]/;
+              if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > maxBytes ||
+                  forbidden.test(value)) {
+                throw new Error(`${label} is not a bounded safe string`);
+              }
+              return value;
+            };
+            const validatePayload = (name) => {
+              const payload = JSON.parse(readRegularFile(name, 50 * 1024 * 1024));
+              exactKeys(payload, ['schema_version', 'cases', 'meta'], `${name} payload`);
+              if (payload.schema_version !== 1 || !Array.isArray(payload.cases) ||
+                  payload.cases.length > 100000) {
+                throw new Error(`${name} has invalid schema version or case count`);
+              }
+              exactKeys(payload.meta, [], `${name} metadata`);
+              for (const [index, row] of payload.cases.entries()) {
+                exactKeys(row, [
+                  'name', 'latency', 'status', 'file', 'source', 'error', 'duration_s',
+                ], `${name} case ${index}`);
+                boundedString(row.name, `${name} case name`);
+                boundedString(row.file, `${name} case file`);
+                boundedString(row.source, `${name} case source`);
+                boundedString(row.error, `${name} case error`, 8192, true);
+                if (!row.name || !row.file || !row.source ||
+                    !['success', 'failed', 'timeout', 'not_found'].includes(row.status) ||
+                    typeof row.duration_s !== 'number' || !Number.isFinite(row.duration_s) ||
+                    row.duration_s < 0 || row.duration_s > 3600 ||
+                    (row.status === 'success' &&
+                     (typeof row.latency !== 'number' || !Number.isFinite(row.latency) ||
+                      row.latency <= 0)) ||
+                    (row.status !== 'success' && row.latency !== null)) {
+                  throw new Error(`${name} case ${index} has invalid values`);
+                }
+              }
+              return payload;
+            };
+            const escapeMarkdown = (value, label) => {
+              const safe = boundedString(value, label, 512, false);
+              if (!safe) throw new Error(`${label} must not be empty`);
+              return safe
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/@/g, '&commat;')
+                .replace(/[\\`*_[\]{}()#+\-.!|]/g, '\\$&');
+            };
+            const renderTrustedReport = (comparison) => {
+              const lines = [
+                '## Validated Performance Results',
+                '',
+                '| Metric | Value |',
+                '|--------|-------|',
+                `| Old cases (success/total) | ${comparison.summary.old_success}/${comparison.summary.old_total} |`,
+                `| New cases (success/total) | ${comparison.summary.new_success}/${comparison.summary.new_total} |`,
+                `| Common success | ${comparison.summary.common_success} |`,
+                `| Regressions below ${comparison.gate.regression_threshold.toFixed(2)}x | ${comparison.gate.num_regressions} |`,
+                `| Correctness OK | ${comparison.gate.correctness_ok ? 'Yes' : 'No'} |`,
+                '',
+              ];
+              if (comparison.comparisons.length) {
+                lines.push(
+                  '### Comparison', '',
+                  '| Benchmark | Source | Old (ms) | New (ms) | Speedup | Delta | Status |',
+                  '|-----------|--------|----------|----------|---------|-------|--------|',
+                );
+                for (const row of comparison.comparisons) {
+                  lines.push(
+                    `| ${escapeMarkdown(row.name, 'comparison name')} | ${escapeMarkdown(row.source, 'comparison source')} | ${row.old_latency.toFixed(4)} | ${row.new_latency.toFixed(4)} | ${row.speedup.toFixed(4)}x | ${row.delta_pct.toFixed(2)}% | ${row.status} |`,
+                  );
+                }
+                lines.push('');
+              }
+              const appendList = (heading, values) => {
+                if (!values.length) return;
+                lines.push(`### ${heading}`, '');
+                for (const value of values) {
+                  lines.push(`- ${escapeMarkdown(value, heading)}`);
+                }
+                lines.push('');
+              };
+              appendList('Old Success to New Failed', comparison.old_success_new_failed);
+              appendList('Only in Old', comparison.only_old);
+              appendList('Only in New', comparison.only_new);
+              appendList('Invalid Latency', comparison.invalid_latency_cases);
+              appendList('Performance Regressions', comparison.gate.performance_regressions);
+              if (comparison.source_failures.length) {
+                lines.push('### Source-level Failures', '');
+                for (const failure of comparison.source_failures) {
+                  const statuses = failure.new_statuses.map(
+                    value => escapeMarkdown(value, 'source status')).join(', ');
+                  const affected = failure.affected_old_cases.map(
+                    value => escapeMarkdown(value, 'affected case')).join(', ');
+                  lines.push(
+                    `- ${escapeMarkdown(failure.source, 'source failure')}: new status ${statuses}; old successful cases: ${affected}`,
+                  );
+                }
+                lines.push('');
+              }
+              appendList('Correctness Failures', comparison.gate.correctness_failures);
+              const verdict = !comparison.gate.correctness_ok
+                ? 'FAIL (correctness)'
+                : comparison.gate.has_performance_regression
+                  ? 'WARN (performance regression, Phase 0 report-only)'
+                  : 'PASS';
+              lines.push(`**Verdict: ${verdict}**`, '');
+              const rendered = lines.join('\n');
+              if (Buffer.byteLength(rendered, 'utf8') > 50000) {
+                throw new Error('trusted structured report exceeds its bounded size');
+              }
+              return rendered;
+            };
+
+            if (requiresArtifact) {
+              try {
+                if (!shaPattern.test(process.env.EXPECTED_NEW_TREE)) {
+                  throw new Error('frozen merge tree SHA is unavailable or invalid');
+                }
+                const artifactStat = fs.lstatSync(artifactDir);
+                if (!artifactStat.isDirectory() || artifactStat.isSymbolicLink()) {
+                  throw new Error('artifact root is not a regular directory');
+                }
+                const actualFiles = fs.readdirSync(artifactDir);
+                if (actualFiles.length !== expectedArtifactFiles.size ||
+                    actualFiles.some(name => !expectedArtifactFiles.has(name))) {
+                  throw new Error('artifact file set does not match the exact publisher schema');
+                }
+                for (const name of actualFiles) {
+                  const entryStat = fs.lstatSync(path.join(artifactDir, name));
+                  if (!entryStat.isFile() || entryStat.isSymbolicLink()) {
+                    throw new Error(`${name} is not a regular non-symlink artifact file`);
+                  }
+                }
+                const metadata = JSON.parse(readRegularFile(
+                  'publisher_metadata.json', artifactLimits.get('publisher_metadata.json')));
+                const rawGateRc = readRegularFile(
+                  'gate_rc.txt', artifactLimits.get('gate_rc.txt'));
+                if (!/^[01]\n$/.test(rawGateRc)) {
+                  throw new Error('invalid canonical gate exit code');
+                }
+                gateRc = rawGateRc[0];
+                exactKeys(metadata, [
+                  'schema_version', 'pr_number', 'request_kind', 'request_order', 'comment_id',
+                  'base_ref', 'base_sha', 'head_sha', 'new_tree', 'run_id', 'run_attempt',
+                  'gate_rc', 'artifact_sha256',
+                ], 'publisher metadata');
+                exactKeys(metadata.artifact_sha256, hashedArtifactFiles, 'artifact SHA-256 manifest');
+                const expectedCommentField = requestKind === 'comment' ? commentId : null;
+                if (metadata.schema_version !== 3 ||
+                    metadata.pr_number !== prNumber ||
+                    metadata.request_kind !== requestKind ||
+                    metadata.request_order !== requestOrder ||
+                    metadata.comment_id !== expectedCommentField ||
+                    metadata.base_ref !== process.env.BASE_REF ||
+                    metadata.base_sha !== process.env.BASE_SHA ||
+                    metadata.head_sha !== process.env.HEAD_SHA ||
+                    metadata.new_tree !== process.env.EXPECTED_NEW_TREE ||
+                    metadata.run_id !== process.env.GITHUB_RUN_ID ||
+                    metadata.run_attempt !== runAttempt ||
+                    metadata.gate_rc !== gateRc ||
+                    !shaPattern.test(metadata.new_tree)) {
+                  throw new Error('publisher metadata does not match frozen resolve-pr outputs');
+                }
+                for (const name of hashedArtifactFiles) {
+                  const claimed = metadata.artifact_sha256[name];
+                  if (typeof claimed !== 'string' || !/^[0-9a-f]{64}$/.test(claimed)) {
+                    throw new Error('artifact SHA-256 manifest contains an invalid digest');
+                  }
+                  const expectedDigest = Buffer.from(claimed, 'hex');
+                  const actualDigest = crypto.createHash('sha256')
+                    .update(readRegularBuffer(name, artifactLimits.get(name))).digest();
+                  if (expectedDigest.length !== actualDigest.length ||
+                      !crypto.timingSafeEqual(expectedDigest, actualDigest)) {
+                    throw new Error('artifact SHA-256 digest mismatch');
+                  }
+                }
+
+                const oldPayload = validatePayload('old_payload.json');
+                const newPayload = validatePayload('new_payload.json');
+                if (oldPayload.cases.length === 0 || newPayload.cases.length === 0) {
+                  throw new Error('benchmark payloads must contain at least one case');
+                }
+
+                const compare = JSON.parse(readRegularFile('regression_compare.json', 10 * 1024 * 1024));
+                if (!compare || typeof compare !== 'object' || Array.isArray(compare) ||
+                    !compare.gate || typeof compare.gate !== 'object' || Array.isArray(compare.gate) ||
+                    !compare.summary || typeof compare.summary !== 'object' || Array.isArray(compare.summary)) {
+                  throw new Error('regression_compare.json is not an object with gate and summary objects');
+                }
+                exactKeys(compare, [
+                  'comparisons', 'only_old', 'only_new', 'old_success_new_failed',
+                  'source_failures', 'invalid_latency_cases', 'gate', 'summary',
+                ], 'comparison result');
+                gate = compare.gate;
+                exactKeys(gate, [
+                  'correctness_ok', 'correctness_failures', 'source_failures',
+                  'performance_regressions', 'regression_threshold',
+                  'has_performance_regression', 'num_compared', 'num_regressions',
+                ], 'comparison gate');
+                exactKeys(compare.summary, [
+                  'old_total', 'old_success', 'new_total', 'new_success', 'common_success',
+                ], 'comparison summary');
+                const isStringArray = (values, allowNewlines = false) =>
+                  Array.isArray(values) && values.length <= 256 &&
+                  values.every(value => {
+                    try {
+                      boundedString(
+                        value, 'comparison string', allowNewlines ? 4096 : 512, allowNewlines);
+                      return true;
+                    } catch {
+                      return false;
+                    }
+                  });
+                const stringArrays = [
+                  compare.only_old, compare.only_new, compare.old_success_new_failed,
+                  compare.invalid_latency_cases, gate.correctness_failures,
+                  gate.performance_regressions,
+                ];
+                const comparisonsValid = Array.isArray(compare.comparisons) &&
+                  compare.comparisons.length <= 256 &&
+                  compare.comparisons.every(row => {
+                    if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+                    try {
+                      exactKeys(row, [
+                        'name', 'source', 'old_latency', 'new_latency', 'speedup',
+                        'delta_pct', 'status',
+                      ], 'comparison row');
+                    } catch {
+                      return false;
+                    }
+                    try {
+                      boundedString(row.name, 'comparison name');
+                      boundedString(row.source, 'comparison source');
+                    } catch {
+                      return false;
+                    }
+                    return row.name.length > 0 && row.source.length > 0 &&
+                      ['improved', 'regressed'].includes(row.status) &&
+                      ['old_latency', 'new_latency', 'speedup', 'delta_pct'].every(
+                        key => typeof row[key] === 'number' && Number.isFinite(row[key]),
+                      ) && row.old_latency > 0 && row.old_latency <= 1e9 &&
+                      row.new_latency > 0 && row.new_latency <= 1e9 &&
+                      row.speedup > 0 && row.speedup <= 1e6 &&
+                      row.delta_pct >= -100 && row.delta_pct <= 1e8;
+                  });
+                const sourceFailuresValid = Array.isArray(compare.source_failures) &&
+                  compare.source_failures.length <= 256 &&
+                  compare.source_failures.every(item => {
+                    try {
+                      exactKeys(item, [
+                        'source', 'new_statuses', 'affected_old_cases', 'errors',
+                      ], 'source failure');
+                      boundedString(item.source, 'source failure identity');
+                    } catch {
+                      return false;
+                    }
+                    return item.source.length > 0 && isStringArray(item.new_statuses) &&
+                      item.new_statuses.every(status =>
+                        ['failed', 'timeout', 'not_found'].includes(status)) &&
+                      isStringArray(item.affected_old_cases) && isStringArray(item.errors, true);
+                  });
+                const allowedCorrectnessFailures = new Set([
+                  'all_old_failed', 'all_new_failed', 'zero_common_success',
+                  'old_success_new_failed', 'source_failure', 'invalid_latency',
+                ]);
+                const uniqueCases = payload => {
+                  const cases = new Map();
+                  for (const row of payload.cases) {
+                    if (!cases.has(row.name)) cases.set(row.name, row);
+                  }
+                  return cases;
+                };
+                const oldCases = uniqueCases(oldPayload);
+                const newCases = uniqueCases(newPayload);
+                const oldSuccessNames = new Set(
+                  [...oldCases].filter(([, row]) => row.status === 'success').map(([name]) => name));
+                const newSuccessNames = new Set(
+                  [...newCases].filter(([, row]) => row.status === 'success').map(([name]) => name));
+                const commonSuccessCount =
+                  [...oldSuccessNames].filter(name => newSuccessNames.has(name)).length;
+                const summaryCounts = Object.values(compare.summary);
+                const summaryMatchesPayloads =
+                  compare.summary.old_total === oldCases.size &&
+                  compare.summary.old_success === oldSuccessNames.size &&
+                  compare.summary.new_total === newCases.size &&
+                  compare.summary.new_success === newSuccessNames.size &&
+                  compare.summary.common_success === commonSuccessCount;
+                if (!comparisonsValid || !sourceFailuresValid ||
+                    !Array.isArray(gate.source_failures) ||
+                    JSON.stringify(gate.source_failures) !== JSON.stringify(compare.source_failures) ||
+                    !stringArrays.every(values => isStringArray(values)) ||
+                    !gate.correctness_failures.every(value =>
+                      allowedCorrectnessFailures.has(value)) ||
+                    new Set(gate.correctness_failures).size !==
+                      gate.correctness_failures.length ||
+                    typeof gate.correctness_ok !== 'boolean' ||
+                    gate.correctness_ok !== (gate.correctness_failures.length === 0) ||
+                    typeof gate.has_performance_regression !== 'boolean' ||
+                    gate.regression_threshold !== 0.95 ||
+                    !Number.isInteger(gate.num_compared) || gate.num_compared < 0 ||
+                    !Number.isInteger(gate.num_regressions) || gate.num_regressions < 0 ||
+                    gate.num_compared !== compare.comparisons.length ||
+                    gate.num_regressions !== gate.performance_regressions.length ||
+                    gate.has_performance_regression !== (gate.num_regressions > 0) ||
+                    !summaryCounts.every(value => Number.isInteger(value) && value >= 0) ||
+                    !summaryMatchesPayloads) {
+                  throw new Error('regression comparison fields have invalid types or values');
+                }
+                if ((gateRc === '0') !== gate.correctness_ok) {
+                  throw new Error('gate exit code disagrees with gate.correctness_ok');
+                }
+                if ((gateRc === '0' && process.env.PPU_RESULT !== 'success') ||
+                    (gateRc === '1' && process.env.PPU_RESULT !== 'failure')) {
+                  throw new Error('gate exit code disagrees with the PPU job result');
+                }
+
+                const artifactReport = readRegularFile(
+                  'regression_result.md', artifactLimits.get('regression_result.md'));
+                if (/[\0\r\x01-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(artifactReport) ||
+                    !artifactReport.startsWith('## Performance Regression Report\n') ||
+                    !artifactReport.includes('**Verdict:') ||
+                    /<!--|-->|<\/?[A-Za-z!][^>\n]*>|(^|[^A-Za-z0-9_])@[A-Za-z0-9_]/u.test(
+                      artifactReport)) {
+                  throw new Error('regression_result.md does not match the restricted report form');
+                }
+                const png = readRegularBuffer(
+                  'regression_result.png', artifactLimits.get('regression_result.png'));
+                if (png.length < 33 || !png.subarray(0, 8).equals(
+                  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+                    png.subarray(12, 16).toString('ascii') !== 'IHDR' ||
+                    png.readUInt32BE(16) < 1 || png.readUInt32BE(16) > 16384 ||
+                    png.readUInt32BE(20) < 1 || png.readUInt32BE(20) > 16384) {
+                  throw new Error('regression_result.png is not a bounded PNG file');
+                }
+                report = renderTrustedReport(compare);
+              } catch {
+                artifactValidationFailed = true;
+                gate = null;
+                gateRc = null;
+                report = '';
+              }
+            }
+
+            let statusText;
+            if (process.env.LINT_RESULT === 'failure') {
+              statusText = 'Lint or frozen merge check failed — PPU benchmarks skipped';
+            } else if (process.env.LINT_RESULT === 'cancelled') {
+              statusText = 'Lint check cancelled, usually because a newer request superseded this run';
+            } else if (process.env.LINT_RESULT === 'skipped') {
+              statusText = 'Lint check skipped — PPU benchmarks did not run';
+            } else if (process.env.PPU_RESULT === 'cancelled') {
+              statusText = 'PPU run cancelled, usually because a newer request superseded this run';
+            } else if (process.env.PPU_RESULT === 'skipped') {
+              statusText = 'PPU run skipped after lint completed';
+            } else if (artifactValidationFailed || !gate || gateRc === null) {
+              statusText = 'Infrastructure failure: required benchmark artifact is unavailable or invalid';
+            } else if (!gate.correctness_ok) {
+              statusText = 'Correctness failure';
+            } else if (gate.has_performance_regression) {
+              statusText = 'Performance regression detected (Phase 0: report-only)';
+            } else {
+              statusText = 'No regression detected';
+            }
+
+            const body = [
+              ownershipMarker,
+              '## PPU 890P Performance Regression',
+              '',
+              '| Info | Value |',
+              '|------|-------|',
+              `| **Status** | ${statusText} |`,
+              `| **Base** | \`${process.env.BASE_REF}\` @ \`${process.env.BASE_SHA.substring(0, 8)}\` |`,
+              `| **Head** | \`${process.env.HEAD_SHA.substring(0, 8)}\` |`,
+              `| **Triggered by** | ${triggerLabel} |`,
+              `| **Image** | \`${process.env.PPU_IMAGE}\` |`,
+              `| **Workflow** | [Run #${process.env.GITHUB_RUN_ID}, attempt ${process.env.GITHUB_RUN_ATTEMPT}](${runUrl}) |`,
+              '| **Board** | ZW-M890P |',
+              '| **Manifest** | `maint/scripts/ppu_perf_890p_allowlist.yaml` |',
+              '',
+              report,
+              '',
+              '<details><summary>Artifacts</summary>',
+              '',
+              `- [Download current-run artifact](${runUrl}#artifacts)`,
+              `- NAS: \`/mnt/wl_nas/devops/tilelang-ci/perf-regression/${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}/ZW-M890P/\``,
+              '',
+              '</details>',
+            ].join('\n');
+            if (Buffer.byteLength(body, 'utf8') > 65536) {
+              core.setFailed('Validated comment exceeds GitHub comment size limit');
+              return;
+            }
+            if (requestKind === 'push' || process.env.STATUS_COMMENT_ID === '') {
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`);
+              return;
+            }
+
+            const { data: current } = await github.rest.issues.getComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: statusCommentId,
+            });
+            if (current.user?.login !== 'github-actions[bot]' || current.user?.type !== 'Bot') {
+              core.setFailed('Owned status comment is not authored by the trusted bot');
+              return;
+            }
+
+            let currentOwnership;
+            try {
+              currentOwnership = parseOwnership(current.body, requestKind);
+            } catch (error) {
+              core.setFailed(`Owned status comment has a malformed marker: ${error}`);
+              return;
+            }
+            if (currentOwnership.requestOrder !== requestOrder ||
+                currentOwnership.runId !== runId ||
+                currentOwnership.runAttempt !== runAttempt) {
+              core.notice('A newer request or run attempt owns the status comment; refusing to overwrite it');
+              return;
+            }
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: statusCommentId,
+              body,
+            });

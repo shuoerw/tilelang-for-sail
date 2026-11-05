@@ -1,7 +1,5 @@
 name: CI
 on:
-  push:
-    branches: [main, "feature/ci**"]
   pull_request:
     types:
       - labeled
@@ -683,6 +681,7 @@ jobs:
 
   ppu-tests:
     name: PPU Test (${{ matrix.board }})
+    needs: [lint]
     runs-on: k8s-runner-group-cpu-thead
     container:
       image: ghcr.io/actions/actions-runner:latest

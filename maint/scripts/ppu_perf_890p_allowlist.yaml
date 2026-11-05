@@ -1,0 +1,59 @@
+# PPU 890P performance regression allowlist.
+# Canonical source for the perf CI benchmark manifest.
+# Enabled entries were verified to produce finite positive latency on ZW-M890P.
+
+schema_version: 1
+platform: ppu-890p
+
+benchmarks:
+  # PPU-specific regressions
+  - path: examples/ppu/flash_decoding/regression_example_flash_decoding.py
+    group: ppu
+  - path: examples/ppu/seer_attention/regression_block_sparse_attn_tilelang.py
+    group: ppu
+
+  # Attention
+  - path: examples/attention_sink/regression_attention_sink.py
+    group: attention
+  - path: examples/flash_attention/regression_example_flash_attention.py
+    group: attention
+  - path: examples/flash_decoding/regression_example_flash_decoding.py
+    group: attention
+  - path: examples/seer_attention/regression_block_sparse_attn_tilelang.py
+    group: attention
+
+  # GEMM
+  - path: examples/gemm_splitk/regression_example_gemm_splitk.py
+    group: gemm
+  - path: examples/blocksparse_gemm/regression_example_blocksparse_gemm.py
+    group: gemm
+
+  # MoE
+  - path: examples/fusedmoe/regression_example_fusedmoe.py
+    group: moe
+
+  # DeepSeek
+  - path: examples/deepseek_mhc/regression_example_mhc.py
+    group: deepseek
+
+excluded:
+  - path: examples/linear_attention/regression_linear_attn.py
+    reason: fla dependency is unavailable in the PPU performance image
+  - path: examples/minference/regression_vs_sparse_attn.py
+    reason: PPU backend does not support the required TMA operation
+  - path: examples/gemm/regression_example_gemm.py
+    reason: PPU MMA lowering requires n=16 but this benchmark uses n=8
+  - path: examples/dequantize_gemm/regression_example_dequantize_gemm.py
+    reason: PPU backend does not support the required FP4 and Hopper code generation
+  - path: examples/deepseek_mla/regression_example_mla_decode.py
+    reason: PPU compilation fails with a LayoutInference conflict
+  - path: examples/deepseek_v32/regression_tilelang_example_deepseek_v32.py
+    reason: PPU backend does not support the required TMA operation
+  - path: examples/ppu/topk/regression_topk_tilelang.py
+    reason: "CI run 40630162805 OLD/NEW latency variance: example_topk max CV 7.470%"
+  - path: examples/blocksparse_attention/regression_example_blocksparse_attention.py
+    reason: "CI run 40630162805 OLD/NEW latency variance: max single-case CV 6.879%"
+  - path: examples/gemm_fp8/regression_example_gemm_fp8.py
+    reason: "CI run 40630162805 OLD/NEW latency variance: example_tilelang_gemm_fp8_2xAcc CV 5.425%"
+  - path: examples/deepseek_nsa/regression_example_tilelang_nsa.py
+    reason: "CI run 40630162805 OLD/NEW latency variance: decode CV 9.283%, fwd CV 8.513%"
