@@ -549,7 +549,9 @@ Stmt Copy::LowerCPAsync(const CopyNode &op, const LowerArgs &lower_args,
       DLOG(WARNING)
           << "Pipeline-managed async copy fallback to normal copy because "
              "cp.async rewrite found no eligible global->shared store.";
-      return lowered_loop;
+      return op.dst->dtype.is_float4_e2m1fn()
+                 ? LowerNormal(op, lower_args, analyzer)
+                 : lowered_loop;
     }
     if (explicit_async_semantics) {
       LOG(FATAL) << "Explicit async copy semantics require cp.async lowering, "
@@ -572,7 +574,60 @@ Stmt Copy::LowerCPAsync(const CopyNode &op, const LowerArgs &lower_args,
 
 Stmt Copy::LowerNormal(const CopyNode &op, const LowerArgs &lower_args,
                        arith::Analyzer *analyzer) {
-  return tl::LowerNormalCopy(op, lower_args, analyzer);
+  Stmt result = tl::LowerNormalCopy(op, lower_args, analyzer);
+  if (!op.dst->dtype.is_float4_e2m1fn() ||
+      (!IsGlobalBuffer(op.src) && !IsSharedBuffer(op.src)) ||
+      (!IsGlobalBuffer(op.dst) && !IsSharedBuffer(op.dst))) {
+    return result;
+  }
+
+  class PackedStoreChecker : public StmtVisitor {
+  public:
+    bool scalar_store = false;
+
+    void VisitStmt_(const ForNode *node) final {
+      bool previous = packed_vector_;
+      if (node->kind == ForKind::kVectorized) {
+        const auto *extent = node->extent.as<IntImmNode>();
+        packed_vector_ |=
+            extent && extent->value >= 2 && extent->value % 2 == 0;
+      }
+      StmtVisitor::VisitStmt_(node);
+      packed_vector_ = previous;
+    }
+
+    void VisitStmt_(const BufferStoreNode *node) final {
+      if (node->buffer->dtype.is_float4_e2m1fn() &&
+          node->value.dtype().is_scalar() && !packed_vector_) {
+        scalar_store = true;
+      }
+    }
+
+  private:
+    bool packed_vector_ = false;
+  } checker;
+  checker(result);
+  if (!checker.scalar_store ||
+      analyzer->CanProveEqual(lower_args.thread_bounds->extent, 1)) {
+    return result;
+  }
+  if (tvm::transform::PassContext::Current()
+          ->GetConfig<Bool>(kDisableThreadStorageSync, Bool(false))
+          .value()) {
+    LOG(FATAL) << "Packed FP4 scalar copy fallback requires ThreadSync to "
+                  "synchronize participating threads. Set "
+                  "tl.disable_thread_storage_sync=false.";
+  }
+
+  // Preserve thread-dependent addresses and enclosing Bind values. Only one
+  // original thread writes per turn; synchronization stays outside its guard.
+  Var writer("fp4_writer", lower_args.thread_index.dtype());
+  Stmt sync = Evaluate(Call(DataType::Int(32), builtin::tvm_storage_sync(),
+                            {StringImm("shared")}));
+  Stmt copy = IfThenElse(lower_args.thread_index == writer, result);
+  return SeqStmt({sync, For(writer, lower_args.thread_bounds->min,
+                            lower_args.thread_bounds->extent, ForKind::kSerial,
+                            SeqStmt({copy, sync}))});
 }
 
 Stmt Copy::LowerLDSM(const CopyNode &op, const LowerArgs &lower_args,
@@ -1125,24 +1180,7 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
                      "cp.async: "
                   << reason << ", src=" << op.src->name
                   << ", dst=" << op.dst->name;
-    Stmt result = LowerCPAsync(op, lower_args, analyzer);
-    if (op.dst->dtype.is_float4_e2m1fn()) {
-      bool has_scalar_fp4_store = false;
-      PostOrderVisit(result, [&](const ObjectRef &node) {
-        if (const auto *store = node.as<BufferStoreNode>()) {
-          has_scalar_fp4_store |= store->buffer->dtype.is_float4_e2m1fn() &&
-                                  store->value.dtype().is_scalar();
-        }
-      });
-      if (has_scalar_fp4_store) {
-        LOG(FATAL)
-            << "T.copy(" << op.src->name << ", " << op.dst->name
-            << ") cannot safely copy packed FP4: scalar stores after AIU "
-               "fallback are unsupported because parallel writes may "
-               "share a byte. Use a byte-aligned layout and copy region.";
-      }
-    }
-    return result;
+    return LowerCPAsync(op, lower_args, analyzer);
   };
 
   if (!TargetIsPPU(lower_args.target) || !TargetHasAiuCopy(lower_args.target)) {

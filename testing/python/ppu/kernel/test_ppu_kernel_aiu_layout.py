@@ -27,11 +27,6 @@ def test_aiu_copy_preserves_values(dtype, bank_bytes, threads, kind):
             T.copy(A[:, width : 2 * width], shared)
             T.copy(shared, B)
 
-    if dtype == "float4_e2m1fn" and kind == "row_major":
-        with pytest.raises(tvm.error.InternalError, match="scalar stores after AIU fallback are unsupported"):
-            tilelang.compile(main, out_idx=[1], pass_configs={"tl.disable_aiu_lower": False})
-        return
-
     kernel = tilelang.compile(main, out_idx=[1], pass_configs={"tl.disable_aiu_lower": False})
     source = kernel.get_kernel_source()
     assert ("tl::aiu_load(" in source) == (kind in ("canonical", "flat"))
@@ -47,7 +42,8 @@ def test_aiu_copy_preserves_values(dtype, bank_bytes, threads, kind):
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
 @pytest.mark.parametrize("kind", ["row_major", "odd_offset"])
-def test_fp4_pipeline_reports_unsupported_fallback(kind):
+@pytest.mark.parametrize("prefer_instruction", [None, "aiu"])
+def test_fp4_pipeline_copy_respects_preference(kind, prefer_instruction):
     dtype = "float4_e2m1fn"
     height, width, iterations = 16, 512, 3
 
@@ -57,8 +53,14 @@ def test_fp4_pipeline_reports_unsupported_fallback(kind):
             shared = T.alloc_shared((height, width), dtype)
             T.annotate_layout({shared: _layout(shared, 128, kind)})
             for k in T.Pipelined(iterations, num_stages=2):
-                T.copy(A[k, :, width : 2 * width], shared, prefer_instruction="aiu")
+                T.copy(A[k, :, width : 2 * width], shared, prefer_instruction=prefer_instruction)
                 T.copy(shared, B[k, :, :])
 
-    with pytest.raises(tvm.error.InternalError, match='prefer_instruction="aiu" could not be honored'):
-        tilelang.compile(main, out_idx=[1], pass_configs={"tl.disable_aiu_lower": False})
+    if prefer_instruction == "aiu":
+        with pytest.raises(tvm.error.InternalError, match='prefer_instruction="aiu" could not be honored'):
+            tilelang.compile(main, out_idx=[1], pass_configs={"tl.disable_aiu_lower": False})
+        return
+    kernel = tilelang.compile(main, out_idx=[1], pass_configs={"tl.disable_aiu_lower": False})
+    generator = torch.Generator(device="cuda").manual_seed(11)
+    raw = torch.randint(0, 256, (iterations, height, width), dtype=torch.uint8, device="cuda", generator=generator)
+    torch.testing.assert_close(kernel(raw.view(torch.int8)).view(torch.uint8), raw[:, :, width // 2 :], rtol=0, atol=0)

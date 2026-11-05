@@ -112,10 +112,10 @@ def _call(stmt, name):
     )
 
 
-def _integer(expr, thread):
+def _integer(expr, thread, writer=None):
     variables = []
     tvm.tirx.stmt_functor.post_order_visit(expr, lambda node: variables.append(node) if isinstance(node, tvm.tirx.Var) else None)
-    values = {"tx": thread}
+    values = {"tx": thread, "fp4_writer": writer}
     assert all(var.name in values and values[var.name] is not None for var in variables), variables
     result = tvm.arith.Analyzer().simplify(tvm.tirx.stmt_functor.substitute(expr, {var: values[var.name] for var in variables}))
     return int(result)
@@ -170,20 +170,25 @@ def test_unaligned_thread_range_falls_back():
 
 
 @pytest.mark.parametrize("width", [255, 257])
-def test_odd_fp4_width_reports_unsupported_fallback(width):
-    with pytest.raises(tvm.error.InternalError, match="cannot safely copy packed FP4"):
-        _lower(make_odd_width_kernel(width))
+def test_odd_fp4_width_falls_back(width):
+    program = _lower(make_odd_width_kernel(width))
+    assert not any(_call(stmt, "tl.ppu_aiu_load") for stmt, _ in _leaves(program.body))
 
 
 @pytest.mark.parametrize("thread_start", [0, 128])
 @pytest.mark.parametrize("stride,offset,single_thread", [(1, 1, False), (2, 0, False), (2, 1, False), (1, 1, True)])
-def test_fp4_scalar_copy_reports_unsupported_fallback(thread_start, stride, offset, single_thread):
-    with pytest.raises(tvm.error.InternalError, match=r"T.copy\(A, shared\) cannot safely copy packed FP4") as error:
-        _lower(make_fp4_scalar_copy_kernel(stride, offset, single_thread, thread_start))
-    assert "scalar stores after AIU fallback are unsupported" in str(error.value)
-    assert "parallel writes may share a byte" in str(error.value)
-    assert "Use a byte-aligned layout and copy region" in str(error.value)
-    assert "Check failed" not in str(error.value)
+def test_fp4_scalar_copy_has_one_active_writer(thread_start, stride, offset, single_thread):
+    program = _lower(make_fp4_scalar_copy_kernel(stride, offset, single_thread, thread_start))
+    stores = [
+        (stmt, guards)
+        for stmt, guards in _leaves(program.body)
+        if isinstance(stmt, tvm.tirx.BufferStore) and stmt.buffer.dtype == "float4_e2m1fn"
+    ]
+    assert stores
+    for _, guards in stores:
+        for writer in (thread_start, thread_start + 1, thread_start + 31):
+            active = [tx for tx in range(thread_start, thread_start + 128) if all(_integer(guard, tx, writer) for guard in guards)]
+            assert set(active) <= {thread_start if single_thread else writer}
 
 
 def make_fp4_packed_copy_kernel():
@@ -227,7 +232,69 @@ def make_thread_dependent_fp4_kernel(dependent, thread_start):
 
 @pytest.mark.parametrize("dependent", ["source", "destination"])
 @pytest.mark.parametrize("thread_start", [0, 128])
-def test_thread_dependent_fp4_copy_reports_unsupported_fallback(dependent, thread_start):
-    with pytest.raises(tvm.error.InternalError, match=r"T.copy\(A, shared\) cannot safely copy packed FP4") as error:
-        _lower(make_thread_dependent_fp4_kernel(dependent, thread_start))
-    assert "scalar stores after AIU fallback are unsupported" in str(error.value)
+def test_thread_dependent_fp4_copy_preserves_addresses(dependent, thread_start):
+    program = _lower(make_thread_dependent_fp4_kernel(dependent, thread_start))
+    for lane in range(32):
+        expected = (2 * lane, 3 * lane) if dependent == "source" else (6 * lane, lane)
+        assert _physical_stores(program, thread_start + lane) == [expected]
+
+
+def _physical_stores(program, thread):
+    analyzer = tvm.arith.Analyzer()
+
+    def integer(expr, bindings):
+        variables = []
+        tvm.tirx.stmt_functor.post_order_visit(expr, lambda node: variables.append(node) if isinstance(node, tvm.tirx.Var) else None)
+        substitutions = dict(bindings)
+        for var in variables:
+            if var.name in ("tx", "ty", "tz", "bx", "by", "bz"):
+                substitutions[var] = thread if var.name == "tx" else 0
+        return int(analyzer.simplify(tvm.tirx.stmt_functor.substitute(expr, substitutions)))
+
+    def visit(stmt, bindings):
+        if isinstance(stmt, tvm.tirx.Bind):
+            bindings[stmt.var] = integer(stmt.value, bindings)
+        elif isinstance(stmt, tvm.tirx.For):
+            start, extent = integer(stmt.min, bindings), integer(stmt.extent, bindings)
+            for i in range(start, start + extent):
+                yield from visit(stmt.body, {**bindings, stmt.loop_var: i})
+        elif isinstance(stmt, tvm.tirx.IfThenElse):
+            if integer(stmt.condition, bindings):
+                yield from visit(stmt.then_case, bindings)
+            elif stmt.else_case is not None:
+                yield from visit(stmt.else_case, bindings)
+        elif isinstance(stmt, tvm.tirx.BufferStore):
+            loads = []
+            tvm.tirx.stmt_functor.post_order_visit(
+                stmt.value, lambda node: loads.append(node) if isinstance(node, tvm.tirx.BufferLoad) else None
+            )
+            if stmt.buffer.scope().startswith("shared"):
+                assert len(loads) == 1
+                yield integer(stmt.indices[0], bindings), integer(loads[0].indices[0], bindings)
+        elif hasattr(stmt, "seq"):
+            for child in stmt.seq:
+                yield from visit(child, bindings)
+        elif hasattr(stmt, "body"):
+            yield from visit(stmt.body, bindings)
+        elif hasattr(stmt, "block"):
+            yield from visit(stmt.block, bindings)
+
+    return list(visit(program.body, {}))
+
+
+def make_fp4_fallback_kernel(dtype, destination, thread_start=0, threads=128):
+    @T.prim_func
+    def main(A: T.Tensor((64,), dtype), Packed: T.Tensor((66,), "float4_e2m1fn"), B: T.Tensor((64,), "float16")):
+        with T.Kernel(1, threads=thread_start + threads):
+            tx = T.get_thread_binding()
+            shared = T.alloc_shared((64,), "float4_e2m1fn")
+            T.annotate_layout({shared: Layout((64,), lambda i: i + 1)})
+            if tx >= thread_start and tx < thread_start + threads:
+                if destination == "global":
+                    T.copy(A, Packed[1:65])
+                    T.copy(Packed[1:65], B)
+                else:
+                    T.copy(A, shared)
+                    T.copy(shared, B)
+
+    return main
