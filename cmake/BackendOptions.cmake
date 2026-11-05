@@ -1,6 +1,7 @@
-# Resolve each backend independently. Linux builds include ROCm and Ascend by
-# default: vendored/local headers and runtime stubs avoid a build-time dependency
-# on either SDK. CUDA still needs a toolkit, while macOS defaults to Metal.
+# Resolve each backend independently. This PPU distribution defaults to the
+# PPU backend only: bare `cmake -B build` and pip builds produce a PPU-only
+# tilelang, restoring the v0.1.11 wheel behavior. Other backends (CUDA, ROCm,
+# Metal, LLVM, Ascend) are opt-in via -DUSE_XXX=ON or the USE_XXX env var.
 set(TILELANG_BACKENDS CUDA ROCM PPU METAL LLVM ASCEND)
 
 set(TILELANG_BACKEND_DOC_CUDA "Enable CUDA backend (ON/OFF/or CUDA SDK path)")
@@ -14,14 +15,21 @@ foreach(BACKEND IN LISTS TILELANG_BACKENDS)
   set(_backend_var "USE_${BACKEND}")
   set(_doc "${TILELANG_BACKEND_DOC_${BACKEND}}")
   set(_default OFF)
-  if(BACKEND STREQUAL "CUDA" AND NOT APPLE AND TILELANG_CUDA_TOOLKIT_AVAILABLE)
-    set(_default ON)
-  elseif(BACKEND STREQUAL "METAL" AND APPLE)
-    set(_default ON)
-  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-         (BACKEND STREQUAL "ROCM" OR BACKEND STREQUAL "ASCEND"))
+  if(BACKEND STREQUAL "PPU")
     set(_default ON)
   endif()
+  # Previous auto-selection defaults, kept for reference. Restore this block
+  # (and drop the PPU-only rule above) to go back to platform-based defaults:
+  # CUDA turned on whenever a host or pip CUDA toolkit was found, Metal on
+  # macOS, ROCm/Ascend unconditionally on Linux.
+  # if(BACKEND STREQUAL "CUDA" AND NOT APPLE AND TILELANG_CUDA_TOOLKIT_AVAILABLE)
+  #   set(_default ON)
+  # elseif(BACKEND STREQUAL "METAL" AND APPLE)
+  #   set(_default ON)
+  # elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+  #        (BACKEND STREQUAL "ROCM" OR BACKEND STREQUAL "ASCEND"))
+  #   set(_default ON)
+  # endif()
 
   # CMake variables (including cached values and -D arguments) take precedence
   # over environment variables. Environment variables initialize a fresh cache.
