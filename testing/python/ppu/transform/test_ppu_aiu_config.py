@@ -32,6 +32,11 @@ def test_direct_pass_context_honors_aiu_disable_flag(config, expected, prefer_in
     with target, tvm.transform.PassContext(config=config):
         mod = tvm.tirx.transform.BindTarget(target)(tvm.IRModule.from_expr(main))
         mod = tilelang.transform.MaterializeKernelLaunch()(mod)
+        if prefer_instruction == "aiu" and not expected:
+            with pytest.raises(tvm.error.InternalError, match="conflicts with pass config"):
+                tilelang.ppu.transform.LayoutInference()(mod)
+            assert normalize_pass_configs(config) == config
+            return
         mod = tilelang.ppu.transform.LayoutInference()(mod)
         mod = tilelang.ppu.transform.LowerTileOp()(mod)
     calls = []

@@ -140,96 +140,6 @@ struct PendingGroup {
   bool unknown_count = false;
 };
 
-// A commit closes every uncommitted load on queue 0. Compiler-managed loads
-// cannot be synchronized independently while a caller-managed group is open.
-class AIUAsyncGroupValidator : public StmtExprVisitor {
-private:
-  void VisitExpr_(const CallNode *op) final {
-    StmtExprVisitor::VisitExpr_(op);
-    if (op->op.same_as(tl::ppu_aiu_load())) {
-      if (ppu::IsCompilerSyncAiuLoad(op)) {
-        ICHECK(!uncommitted_caller_load_)
-            << "Cannot insert compiler-managed AIU synchronization into an "
-               "uncommitted caller-managed async group. Call "
-               "T.ptx_commit_group() before a compiler-managed AIU load "
-               "(including T.copy), or use caller-managed loads for the "
-               "entire group.";
-      } else {
-        uncommitted_caller_load_ = true;
-      }
-    } else if (op->op.same_as(builtin::ptx_commit_group())) {
-      uncommitted_caller_load_ = false;
-    }
-  }
-
-  void VisitStmt_(const IfThenElseNode *op) final {
-    VisitExpr(op->condition);
-    if (const int64_t *condition = as_const_int(op->condition)) {
-      if (*condition) {
-        VisitStmt(op->then_case);
-      } else if (op->else_case.defined()) {
-        VisitStmt(op->else_case.value());
-      }
-      return;
-    }
-    bool incoming = uncommitted_caller_load_;
-    VisitStmt(op->then_case);
-    bool then_pending = uncommitted_caller_load_;
-    uncommitted_caller_load_ = incoming;
-    if (op->else_case.defined()) {
-      VisitStmt(op->else_case.value());
-    }
-    uncommitted_caller_load_ |= then_pending;
-  }
-
-  void VisitLoop(const Stmt &body, bool at_least_once, bool exactly_once) {
-    bool incoming = uncommitted_caller_load_;
-    VisitStmt(body);
-    bool outgoing = uncommitted_caller_load_;
-    // A group opened at the tail can reach a compiler load in the next
-    // iteration. The boolean may-state reaches a fixed point in two visits.
-    if (!exactly_once && !incoming && outgoing) {
-      VisitStmt(body);
-      outgoing |= uncommitted_caller_load_;
-    }
-    uncommitted_caller_load_ = outgoing || (!at_least_once && incoming);
-  }
-
-  void VisitStmt_(const ForNode *op) final {
-    VisitExpr(op->min);
-    VisitExpr(op->extent);
-    const int64_t *extent = as_const_int(op->extent);
-    if (extent && *extent <= 0) {
-      return;
-    }
-    VisitLoop(op->body, extent && *extent > 0, extent && *extent == 1);
-  }
-
-  void VisitStmt_(const WhileNode *op) final {
-    VisitExpr(op->condition);
-    const int64_t *condition = as_const_int(op->condition);
-    if (condition && *condition == 0) {
-      return;
-    }
-    VisitLoop(op->body, false, false);
-  }
-
-  void VisitStmt_(const AttrStmtNode *op) final {
-    if (op->attr_key == s_tir::attr::async_commit_queue_scope) {
-      const int64_t *queue = as_const_int(op->value);
-      if (queue && *queue == 0) {
-        // The injector leaves this body untouched. Its trailing commit closes
-        // both incoming loads and loads issued inside the owned scope.
-        uncommitted_caller_load_ = false;
-        return;
-      }
-    }
-    StmtExprVisitor::VisitStmt_(op);
-  }
-
-  bool uncommitted_caller_load_ = false;
-};
-
 class AIUSyncBarrierInjector : public StmtExprMutator {
 public:
   explicit AIUSyncBarrierInjector(bool wait_all) : wait_all_(wait_all) {}
@@ -722,7 +632,6 @@ using namespace tirx::transform;
 
 tvm::transform::Pass InjectAIUSyncBarrier() {
   auto pass_func = [=](PrimFunc f, const IRModule &m, const PassContext &ctx) {
-    AIUAsyncGroupValidator()(f->body);
     auto *n = f.CopyOnWrite();
     // Conditional loads can issue different numbers of groups on each path.
     // Keep precise waits for straight-line loads; otherwise drain the queue at

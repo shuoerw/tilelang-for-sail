@@ -24,13 +24,14 @@ def test_aiu_copy_preserves_values(dtype, bank_bytes, threads, kind):
         with T.Kernel(1, threads=threads):
             shared = T.alloc_shared((height, width), dtype)
             T.annotate_layout({shared: _layout(shared, bank_bytes, kind)})
-            T.copy(A[:, width : 2 * width], shared, prefer_instruction="aiu")
+            T.copy(A[:, width : 2 * width], shared)
             T.copy(shared, B)
 
     if dtype == "float4_e2m1fn" and kind == "row_major":
-        with pytest.raises(tvm.error.InternalError, match="AIU FP4 fallback requires all stores to use cp.async"):
+        with pytest.raises(tvm.error.InternalError, match="scalar stores after AIU fallback are unsupported"):
             tilelang.compile(main, out_idx=[1], pass_configs={"tl.disable_aiu_lower": False})
         return
+
     kernel = tilelang.compile(main, out_idx=[1], pass_configs={"tl.disable_aiu_lower": False})
     source = kernel.get_kernel_source()
     assert ("tl::aiu_load(" in source) == (kind in ("canonical", "flat"))
@@ -59,5 +60,5 @@ def test_fp4_pipeline_reports_unsupported_fallback(kind):
                 T.copy(A[k, :, width : 2 * width], shared, prefer_instruction="aiu")
                 T.copy(shared, B[k, :, :])
 
-    with pytest.raises(tvm.error.InternalError, match="AIU FP4 fallback requires all stores to use cp.async"):
+    with pytest.raises(tvm.error.InternalError, match='prefer_instruction="aiu" could not be honored'):
         tilelang.compile(main, out_idx=[1], pass_configs={"tl.disable_aiu_lower": False})

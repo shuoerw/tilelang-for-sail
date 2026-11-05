@@ -1,10 +1,12 @@
 """Functional tests for automatic and preferred PPU AIU copies."""
 
+import pytest
 import torch
 
 import tilelang
 import tilelang.ppu.language as T
 import tilelang.testing
+from tilelang import tvm
 from tilelang.transform import PassConfigKey
 
 
@@ -77,9 +79,9 @@ def test_preferred_copy_uses_aiu_and_gets_sync():
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
-def test_preferred_aiu_copy_can_be_disabled():
-    source = _source(_compile("preferred", enabled=False))
-    assert "tl::aiu_load" not in source
+def test_preferred_aiu_copy_rejects_disabled_aiu():
+    with pytest.raises(tvm.error.InternalError, match="conflicts with pass config"):
+        _compile("preferred", enabled=False)
 
 
 @tilelang.testing.requires_ppu_compute_version(1, 5)
@@ -91,7 +93,7 @@ def test_stage0_aiu_fallback_cp_async_keeps_sync_semantics():
     ):
         with T.Kernel(1, threads=128):
             shared = T.alloc_shared((13, 512), T.float16)
-            T.copy(A, shared, prefer_instruction="aiu")
+            T.copy(A, shared)
             for i, j in T.Parallel(13, 512):
                 B[i, j] = shared[i, j]
 

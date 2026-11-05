@@ -469,27 +469,51 @@ def test_commit_scope_owns_mixed_loads_and_closes_incoming_group(incoming, neste
         assert _events(result.body, {"condition": value}) == expected
 
 
-@pytest.mark.parametrize("pattern", ["scope_then_overlap", "partial_scope", "other_queue", "nested", "loop_carried"])
-def test_overlap_validation_outside_owned_scope(pattern):
+@pytest.mark.parametrize("pattern", ["straight", "scope_then_overlap", "partial_scope", "nested", "loop_carried"])
+@pytest.mark.parametrize("load_count", [1, 2])
+def test_mixed_aiu_groups_wait_before_use(pattern, load_count):
     src = tir.Var("src", "handle")
     condition = tir.Var("condition", "bool")
-    a, x = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("A", "X")]
-    direct, compiler = _load(a, src, caller=True), _load(x, src)
+    inner = tir.Var("inner", "bool")
+    a, x, y = [tir.decl_buffer((128,), "uint8", name=name, scope="shared") for name in ("A", "X", "Y")]
+    direct = _load(a, src, caller=True)
+    compiler = _load(x, src)
+    reads = [tir.Evaluate(x[0])]
+    if load_count == 2:
+        compiler = tir.AttrStmt(0, "async_commit_queue_scope", 0, tir.SeqStmt([compiler, _load(y, src)]))
+        reads.append(tir.Evaluate(y[0]))
     scope = tir.AttrStmt(tir.IntImm("int32", 0), "async_commit_queue_scope", 0, direct)
-    if pattern == "scope_then_overlap":
-        statements = [scope, direct, compiler]
+    if pattern == "straight":
+        statements = [direct, compiler, *reads]
+    elif pattern == "scope_then_overlap":
+        statements = [scope, _wait(), direct, compiler, *reads]
     elif pattern == "partial_scope":
-        statements = [direct, tir.IfThenElse(condition, scope, None), compiler]
-    elif pattern == "other_queue":
-        statements = [tir.AttrStmt(tir.IntImm("int32", 0), "async_commit_queue_scope", 1, tir.SeqStmt([direct, compiler]))]
+        statements = [direct, tir.IfThenElse(condition, _commit(), None), compiler, *reads]
     elif pattern == "nested":
-        statements = [direct, tir.IfThenElse(condition, tir.IfThenElse(condition, compiler, None), None)]
+        body = tir.SeqStmt([compiler, *reads])
+        statements = [direct, tir.IfThenElse(condition, tir.IfThenElse(inner, body, None), None)]
     else:
-        statements = [tir.For(tir.Var("i", "int32"), 0, 2, tir.ForKind.SERIAL, tir.SeqStmt([compiler, scope, direct]))]
-    body = statements[0] if len(statements) == 1 else tir.SeqStmt(statements)
-    func = tir.PrimFunc([src, condition, a.data, x.data], body)
-    with pytest.raises(tvm.error.InternalError, match="uncommitted caller-managed async group"):
-        tilelang.ppu.transform.InjectAIUSyncBarrier()(tvm.IRModule({"main": func}))
+        body = tir.SeqStmt([compiler, *reads, direct])
+        statements = [tir.For(tir.Var("i", "int32"), 0, 2, tir.ForKind.SERIAL, body)]
+    statements.extend([_commit(), _wait(), tir.Evaluate(a[0])])
+    func = tir.PrimFunc([src, condition, inner, a.data, x.data, y.data], tir.SeqStmt(statements))
+    result = tilelang.ppu.transform.InjectAIUSyncBarrier()(tvm.IRModule({"main": func}))["main"]
+    for enabled, nested_enabled in product((False, True), repeat=2):
+        events = _events(result.body, {"condition": enabled, "inner": nested_enabled})
+        open_group = set()
+        pending = []
+        for kind, value in events:
+            if kind == "load":
+                open_group.add(value)
+            elif kind == "commit":
+                pending.append(open_group)
+                open_group = set()
+            elif kind == "wait":
+                pending = pending[-value:] if value else []
+            elif kind == "read":
+                assert value not in open_group, events
+                assert all(value not in group for group in pending), events
+        assert not open_group and not pending, events
 
 
 @pytest.mark.parametrize("scope,merge", [("shared", False), ("shared", True), ("shared.dyn", False)])

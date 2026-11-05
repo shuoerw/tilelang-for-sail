@@ -70,8 +70,12 @@ def _lower(dtype, bank_bytes, kind, threads, prefer_instruction):
 @pytest.mark.parametrize("kind", ["canonical", "flat", "row_major", "offset"])
 @pytest.mark.parametrize("prefer_instruction", [None, "aiu"])
 def test_aiu_requires_canonical_address_mapping(dtype, bank_bytes, threads, kind, prefer_instruction):
+    if prefer_instruction == "aiu" and kind in ("row_major", "offset"):
+        with pytest.raises(tvm.error.InternalError, match='prefer_instruction="aiu" could not be honored'):
+            _lower(dtype, bank_bytes, kind, threads, prefer_instruction)
+        return
     if dtype == "float4_e2m1fn" and kind == "row_major":
-        with pytest.raises(tvm.error.InternalError, match="AIU FP4 fallback requires all stores to use cp.async"):
+        with pytest.raises(tvm.error.InternalError, match="cannot safely copy packed FP4"):
             _lower(dtype, bank_bytes, kind, threads, prefer_instruction)
         return
     calls = _lower(dtype, bank_bytes, kind, threads, prefer_instruction)
@@ -104,5 +108,6 @@ def test_aiu_requires_canonical_address_mapping(dtype, bank_bytes, threads, kind
 @pytest.mark.parametrize("kind", ["odd_offset", "odd_stride"])
 @pytest.mark.parametrize("prefer_instruction", [None, "aiu"])
 def test_fp4_non_byte_aligned_layout_reports_unsupported_fallback(kind, prefer_instruction):
-    with pytest.raises(tvm.error.InternalError, match="AIU FP4 fallback requires all stores to use cp.async"):
+    diagnostic = 'prefer_instruction="aiu" could not be honored' if prefer_instruction == "aiu" else "cannot safely copy packed FP4"
+    with pytest.raises(tvm.error.InternalError, match=diagnostic):
         _lower("float4_e2m1fn", 128, kind, 128, prefer_instruction)

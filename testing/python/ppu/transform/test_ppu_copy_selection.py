@@ -24,7 +24,8 @@ def _lower(program, enabled=True):
     return ops
 
 
-def test_sync_aiu_preference_keeps_shared_to_fragment_ldsm():
+@pytest.mark.parametrize("prefer_instruction", [None, "aiu"])
+def test_shared_to_fragment_copy_respects_aiu_preference(prefer_instruction):
     layout = make_gemm_fragment_8x8().repeat([2, 2], repeat_on_thread=False)
 
     @T.prim_func
@@ -34,9 +35,13 @@ def test_sync_aiu_preference_keeps_shared_to_fragment_ldsm():
             fragment = T.alloc_fragment((16, 16), "float16")
             T.annotate_layout({shared: make_linear_layout(shared), fragment: layout})
             T.copy(A, shared)
-            T.copy(shared, fragment, prefer_instruction="aiu")
+            T.copy(shared, fragment, prefer_instruction=prefer_instruction)
             T.copy(fragment, B)
 
+    if prefer_instruction == "aiu":
+        with pytest.raises(tvm.error.InternalError, match="global->shared copy with matching dtype"):
+            _lower(main)
+        return
     ops = _lower(main)
     assert "tl.ptx_ldmatrix" in ops
     assert "tl.ppu_aiu_load" not in ops
@@ -64,16 +69,18 @@ def test_unsupported_async_copy_has_direct_diagnostic(direction):
         _lower(main)
 
 
-def test_aiu_ineligible_dtype_uses_cp_async():
+@pytest.mark.parametrize("pipeline_managed", [False, True])
+def test_aiu_preference_rejects_ineligible_dtype(pipeline_managed):
+    annotations = {"no_implicit_async_commit_wait": 1} if pipeline_managed else {}
+
     @T.prim_func
     def main(A: T.Tensor((16, 64), "float32")):
         with T.Kernel(1, threads=128):
             shared = T.alloc_shared((16, 64), "float32")
-            T.copy(A, shared, prefer_instruction="aiu")
+            T.copy(A, shared, prefer_instruction="aiu", annotations=annotations)
 
-    ops = _lower(main)
-    assert "tl.ppu_aiu_load" not in ops
-    assert "tl.ptx_cp_async" in ops
+    with pytest.raises(tvm.error.InternalError, match="global->shared copy with matching dtype"):
+        _lower(main)
 
 
 @pytest.mark.parametrize("prefer_instruction", ["cp_async", "sync"])
@@ -135,7 +142,8 @@ def test_aiu_preference_does_not_enable_generic_fp4_fallback(direction, enabled,
             else:
                 T.copy(A, B, prefer_instruction="aiu", annotations=annotations)
 
-    with pytest.raises(tvm.error.InternalError, match="AIU preference cannot fall back for this FP4 copy"):
+    diagnostic = "global->shared copy with matching dtype" if enabled else "conflicts with pass config"
+    with pytest.raises(tvm.error.InternalError, match=diagnostic):
         _lower(main, enabled=enabled)
 
 
@@ -147,5 +155,5 @@ def test_fp4_aiu_preference_reports_disabled_aiu():
             T.annotate_layout({shared: make_full_bank_swizzled_layout(shared)})
             T.copy(A, shared, prefer_instruction="aiu")
 
-    with pytest.raises(tvm.error.InternalError, match="AIU preference cannot fall back for this FP4 copy"):
+    with pytest.raises(tvm.error.InternalError, match="conflicts with pass config"):
         _lower(main, enabled=False)

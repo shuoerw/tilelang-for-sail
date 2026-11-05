@@ -341,19 +341,21 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
                               : Unsupported(facts.async_unavailable_reason);
   }
 
-  if (facts.prefer_instruction == PreferredCopyInstruction::kAIU &&
-      op.dst->dtype.is_float4_e2m1fn() &&
-      (IsGlobalBuffer(op.dst) || IsSharedBuffer(op.dst)) &&
-      (facts.pass_context_disables_aiu || !facts.can_aiu_load)) {
-    return Unsupported(
-        "PPU AIU preference cannot fall back for this FP4 copy. "
-        "Use a matching-dtype global->shared copy with AIU enabled, "
-        "or copy explicitly packed uint8 data.");
+  if (facts.prefer_instruction == PreferredCopyInstruction::kAIU) {
+    if (facts.pass_context_disables_aiu) {
+      return Unsupported("T.copy prefer_instruction=\"aiu\" conflicts with "
+                         "pass config tl.disable_aiu_lower=true.");
+    }
+    return facts.can_aiu_load
+               ? Supported(CopyInst::kAiuLoad)
+               : Unsupported(
+                     "T.copy prefer_instruction=\"aiu\" requires a PPU "
+                     "AIU-capable fp16/bf16/float8_e4m3fn/float8_e5m2/"
+                     "float4_e2m1fn global->shared copy with matching dtype.");
   }
 
   if (facts.no_implicit_async_commit_wait) {
-    if ((facts.prefer_instruction == PreferredCopyInstruction::kAuto ||
-         facts.prefer_instruction == PreferredCopyInstruction::kAIU) &&
+    if (facts.prefer_instruction == PreferredCopyInstruction::kAuto &&
         !facts.pass_context_disables_aiu && facts.can_aiu_load) {
       return Supported(CopyInst::kAiuLoad);
     }
@@ -378,17 +380,6 @@ CopyInstSelection SelectCopyInstForLowering(const CopyNode &op,
                : Unsupported("T.copy prefer_instruction="
                              "\"cp_async\" could not be honored: " +
                              facts.async_unavailable_reason);
-  }
-
-  if (facts.prefer_instruction == PreferredCopyInstruction::kAIU) {
-    if (facts.pass_context_disables_aiu) {
-      return Supported(SelectSyncLikeInst(facts));
-    }
-    if (facts.can_aiu_load)
-      return Supported(CopyInst::kAiuLoad);
-    if (facts.can_cp_async)
-      return Supported(CopyInst::kCPAsync);
-    return Supported(SelectSyncLikeInst(facts));
   }
 
   if (facts.prefer_instruction == PreferredCopyInstruction::kSync) {

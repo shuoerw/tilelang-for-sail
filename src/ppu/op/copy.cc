@@ -1109,25 +1109,37 @@ Stmt Copy::LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
   Array<Range> global_range = op.src_range;
   Array<Range> shared_range = op.dst_range;
 
+  bool explicit_aiu = false;
+  if (auto prefer = op.annotations.Get("prefer_instruction")) {
+    if (auto str = prefer->as<StringImmNode>()) {
+      explicit_aiu = str->value == "aiu";
+    }
+  }
   auto fallback = [&](const std::string &reason) -> Stmt {
+    if (explicit_aiu) {
+      LOG(FATAL) << "T.copy prefer_instruction=\"aiu\" could not be honored: "
+                 << reason << ", src=" << op.src->name
+                 << ", dst=" << op.dst->name;
+    }
     DLOG(WARNING) << "AIU copy falls back to "
                      "cp.async: "
                   << reason << ", src=" << op.src->name
                   << ", dst=" << op.dst->name;
     Stmt result = LowerCPAsync(op, lower_args, analyzer);
     if (op.dst->dtype.is_float4_e2m1fn()) {
-      bool has_fp4_store = false;
+      bool has_scalar_fp4_store = false;
       PostOrderVisit(result, [&](const ObjectRef &node) {
         if (const auto *store = node.as<BufferStoreNode>()) {
-          has_fp4_store |= store->buffer->dtype.is_float4_e2m1fn();
+          has_scalar_fp4_store |= store->buffer->dtype.is_float4_e2m1fn() &&
+                                  store->value.dtype().is_scalar();
         }
       });
-      if (has_fp4_store) {
+      if (has_scalar_fp4_store) {
         LOG(FATAL)
-            << "AIU FP4 fallback requires all stores to use cp.async: "
-            << reason << ", dst=" << op.dst->name
-            << ". Use a byte-aligned layout and copy region supported "
-               "by AIU or cp.async, or copy explicitly packed uint8 data.";
+            << "T.copy(" << op.src->name << ", " << op.dst->name
+            << ") cannot safely copy packed FP4: scalar stores after AIU "
+               "fallback are unsupported because parallel writes may "
+               "share a byte. Use a byte-aligned layout and copy region.";
       }
     }
     return result;

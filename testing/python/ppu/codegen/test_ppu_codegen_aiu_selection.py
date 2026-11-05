@@ -29,6 +29,11 @@ def _kernel(num_stages, prefer_instruction):
 def test_automatic_aiu_matches_explicit_preference(num_stages, enabled):
     with TARGET, tvm.transform.PassContext(opt_level=3, config={"tl.disable_aiu_lower": not enabled}):
         automatic = lower(_kernel(num_stages, None), target=TARGET).kernel_source
+        if not enabled:
+            assert "tl::aiu_load(" not in automatic
+            with pytest.raises(tvm.error.InternalError, match="conflicts with pass config"):
+                lower(_kernel(num_stages, "aiu"), target=TARGET)
+            return
         preferred = lower(_kernel(num_stages, "aiu"), target=TARGET).kernel_source
 
     assert automatic == preferred

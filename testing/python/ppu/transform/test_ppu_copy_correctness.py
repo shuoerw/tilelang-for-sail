@@ -5,7 +5,7 @@ import pytest
 import tilelang
 import tilelang.ppu.language as T
 import tilelang.ppu.transform
-from tilelang import tvm
+from tilelang import Layout, tvm
 from tilelang.layout import make_full_bank_swizzled_layout, make_half_bank_swizzled_layout
 
 
@@ -44,6 +44,25 @@ def make_unaligned_region_kernel(row_start, col_start):
             T.annotate_layout({shared: make_full_bank_swizzled_layout(shared)})
             T.copy(A, shared[row_start : row_start + 8, col_start : col_start + 64])
             T.copy(shared[row_start : row_start + 8, col_start : col_start + 64], B)
+
+    return main
+
+
+def make_fp4_scalar_copy_kernel(stride=1, offset=1, single_thread=False, thread_start=0):
+    @T.prim_func
+    def main(A: T.Tensor((64,), "float4_e2m1fn"), B: T.Tensor((64,), "float16")):
+        with T.Kernel(1, threads=thread_start + 128):
+            tx = T.get_thread_binding()
+            shared = T.alloc_shared((64,), "float4_e2m1fn")
+            T.annotate_layout({shared: Layout((64,), lambda i: stride * i + offset)})
+            if single_thread:
+                if tx == thread_start:
+                    T.copy(A, shared)
+                    T.copy(shared, B)
+            else:
+                if tx >= thread_start:
+                    T.copy(A, shared)
+                    T.copy(shared, B)
 
     return main
 
@@ -152,5 +171,63 @@ def test_unaligned_thread_range_falls_back():
 
 @pytest.mark.parametrize("width", [255, 257])
 def test_odd_fp4_width_reports_unsupported_fallback(width):
-    with pytest.raises(tvm.error.InternalError, match="AIU FP4 fallback requires all stores to use cp.async"):
+    with pytest.raises(tvm.error.InternalError, match="cannot safely copy packed FP4"):
         _lower(make_odd_width_kernel(width))
+
+
+@pytest.mark.parametrize("thread_start", [0, 128])
+@pytest.mark.parametrize("stride,offset,single_thread", [(1, 1, False), (2, 0, False), (2, 1, False), (1, 1, True)])
+def test_fp4_scalar_copy_reports_unsupported_fallback(thread_start, stride, offset, single_thread):
+    with pytest.raises(tvm.error.InternalError, match=r"T.copy\(A, shared\) cannot safely copy packed FP4") as error:
+        _lower(make_fp4_scalar_copy_kernel(stride, offset, single_thread, thread_start))
+    assert "scalar stores after AIU fallback are unsupported" in str(error.value)
+    assert "parallel writes may share a byte" in str(error.value)
+    assert "Use a byte-aligned layout and copy region" in str(error.value)
+    assert "Check failed" not in str(error.value)
+
+
+def make_fp4_packed_copy_kernel():
+    @T.prim_func
+    def main(A: T.Tensor((16, 64), "float4_e2m1fn"), B: T.Tensor((16, 64), "float16")):
+        with T.Kernel(1, threads=128):
+            shared = T.alloc_shared((16, 64), "float4_e2m1fn")
+            T.annotate_layout({shared: Layout((16, 64), lambda i, j: i * 64 + j)})
+            T.copy(A, shared)
+            T.copy(shared, B)
+
+    return main
+
+
+def test_fp4_fallback_preserves_cp_async():
+    program = _lower(make_fp4_packed_copy_kernel())
+    assert any(_call(stmt, "tl.ptx_cp_async") for stmt, _ in _leaves(program.body))
+    assert not any(_call(stmt, "tl.ppu_aiu_load") for stmt, _ in _leaves(program.body))
+
+
+def make_thread_dependent_fp4_kernel(dependent, thread_start):
+    @T.prim_func
+    def main(A: T.Tensor((96,), "float4_e2m1fn"), B: T.Tensor((32,), "float16")):
+        with T.Kernel(1, threads=thread_start + 32):
+            tx = T.get_thread_binding()
+            shared = T.alloc_shared((96,), "float4_e2m1fn")
+            T.annotate_layout({shared: Layout((96,), lambda i: 2 * i)})
+            offset = 2 * (tx - thread_start)
+            if tx >= thread_start and tx < thread_start + 32:
+                if dependent == "source":
+                    T.copy(A[offset : offset + 32], shared[:32])
+                    for i in T.Parallel(32):
+                        B[i] = T.Cast("float16", shared[i])
+                else:
+                    T.copy(A[:32], shared[offset : offset + 32])
+                    for i in T.Parallel(32):
+                        B[i] = T.Cast("float16", shared[3 * i])
+
+    return main
+
+
+@pytest.mark.parametrize("dependent", ["source", "destination"])
+@pytest.mark.parametrize("thread_start", [0, 128])
+def test_thread_dependent_fp4_copy_reports_unsupported_fallback(dependent, thread_start):
+    with pytest.raises(tvm.error.InternalError, match=r"T.copy\(A, shared\) cannot safely copy packed FP4") as error:
+        _lower(make_thread_dependent_fp4_kernel(dependent, thread_start))
+    assert "scalar stores after AIU fallback are unsupported" in str(error.value)
