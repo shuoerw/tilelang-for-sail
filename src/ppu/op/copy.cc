@@ -378,8 +378,6 @@ struct Copy {
                     arith::Analyzer *analyzer);
 
 private:
-  static Layout ComputeLinearLayout(const Buffer &shared_tensor);
-
   static CopyInst SelectInst(const CopyNode &op, Target target,
                              const LayoutMap &layout_map,
                              arith::Analyzer *analyzer);
@@ -398,23 +396,6 @@ private:
   static Stmt LowerAiu(const CopyNode &op, const LowerArgs &lower_args,
                        arith::Analyzer *analyzer);
 };
-
-Layout Copy::ComputeLinearLayout(const Buffer &shared_tensor) {
-  Array<PrimExpr> input_size = shared_tensor->shape;
-  Array<PrimExpr> forward_vars;
-  for (size_t i = 0; i < input_size.size(); i++) {
-    forward_vars.push_back(InputPlaceholder(i));
-  }
-
-  Array<PrimExpr> forward_index;
-  for (size_t i = 0; i < input_size.size(); i++) {
-    forward_index.push_back(FloorDiv(forward_vars[i], 256));
-  }
-  for (size_t i = 0; i < input_size.size(); i++) {
-    forward_index.push_back(FloorMod(forward_vars[i], 256));
-  }
-  return Layout(input_size, forward_index);
-}
 
 LayoutMap Copy::InferLayout(const CopyNode &op,
                             const LayoutInferArgs &layout_args,
