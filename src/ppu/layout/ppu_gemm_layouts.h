@@ -9,6 +9,8 @@
 
 #include "layout/layout.h" // Layout, Buffer, etc.
 
+#include <cstdint>
+
 namespace tvm {
 namespace tl {
 
@@ -27,6 +29,16 @@ Layout MakeGemmABLayoutPPU(int mat_stride, int mat_continuous, int continuity,
 // PPU: Buffer-based wrapper around MakeGemmABLayoutPPU.
 Layout MakePPUSwizzledLayout(const tirx::Buffer &buffer, bool k_inner = true,
                              bool allow_pad = true, bool is_gemm_rs = false);
+
+enum class AIUSharedLayoutClass : uint8_t {
+  kSwizzle32,  // canonical 32B swizzle (unsupported by AIU)
+  kSwizzle64,  // canonical 64B swizzle
+  kSwizzle128, // canonical 128B swizzle
+  kOther,      // not a canonical swizzle layout
+};
+
+AIUSharedLayoutClass ClassifySharedLayoutForAIU(const Layout &layout,
+                                                const tirx::Buffer &buffer);
 
 } // namespace tl
 } // namespace tvm

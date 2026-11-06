@@ -63,17 +63,9 @@ static const VarNode *ExtractAIULoadDstVar(const Stmt &stmt) {
  * (not inside For/Block/If containers).
  */
 static bool IsAIULoadStmt(const Stmt &stmt) {
-  bool found = false;
-  PostOrderVisit(stmt, [&](const ObjectRef &node) {
-    if (found)
-      return;
-    if (auto *call = node.as<CallNode>()) {
-      if (call->op.same_as(tl::ppu_aiu_load())) {
-        found = true;
-      }
-    }
-  });
-  return found;
+  const auto *eval = stmt.as<EvaluateNode>();
+  const auto *call = eval ? eval->value.as<CallNode>() : nullptr;
+  return call && ppu::IsCompilerSyncAiuLoad(call);
 }
 
 /*!
@@ -194,9 +186,9 @@ public:
     //    For/Block/If containers)
     std::vector<int> load_indices;
     for (int i = 0; i < static_cast<int>(seq.size()); ++i) {
-      bool is_container =
-          seq[i].as<ForNode>() || seq[i].as<SBlockRealizeNode>() ||
-          seq[i].as<SBlockNode>() || seq[i].as<IfThenElseNode>();
+      bool is_container = seq[i].as<ForNode>() ||
+                          seq[i].as<SBlockRealizeNode>() ||
+                          seq[i].as<SBlockNode>();
       if (!is_container && IsAIULoadStmt(seq[i])) {
         load_indices.push_back(i);
       }
@@ -434,6 +426,41 @@ public:
     std::unordered_map<int, int> slot_to_load_original;
     for (size_t i = 0; i < load_infos.size(); ++i) {
       slot_to_load_original[final_assignment[i]] = load_infos[i].original_idx;
+    }
+
+    // Validate the complete permutation before moving anything. A conditional,
+    // memory access, or synchronization between load slots is a boundary.
+    // Scalar, pure binds may be crossed only if the address definitions remain
+    // available at the assigned slot.
+    for (const auto &[slot, original] : slot_to_load_original) {
+      if (slot == original)
+        continue;
+      std::unordered_set<const VarNode *> needed;
+      CollectVars(seq[original], &needed);
+      for (const VarNode *var : needed) {
+        auto def = var_def_pos.find(var);
+        if (def != var_def_pos.end() && def->second >= slot)
+          return SeqStmt(seq);
+      }
+      for (int i = std::min(slot, original); i <= std::max(slot, original);
+           ++i) {
+        if (i == original)
+          continue;
+        if (IsAIULoadStmt(seq[i])) {
+          const VarNode *dst = ExtractAIULoadDstVar(seq[i]);
+          const VarNode *moving_dst = ExtractAIULoadDstVar(seq[original]);
+          if (!dst || !moving_dst || dst == moving_dst ||
+              UsesAnyVar(seq[original], {dst}) ||
+              UsesAnyVar(seq[i], {moving_dst})) {
+            return SeqStmt(seq);
+          }
+          continue;
+        }
+        const auto *bind = seq[i].as<BindNode>();
+        if (!bind || SideEffect(bind->value) > CallEffectKind::kPure) {
+          return SeqStmt(seq);
+        }
+      }
     }
 
     Array<Stmt> new_seq;

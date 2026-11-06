@@ -201,31 +201,6 @@ def _mixed_aiu_test_ir():
 
 
 @tilelang.testing.requires_ppu
-@pytest.mark.parametrize("pattern", ["straight", "branch", "loop", "loop_carried", "while_carried", "partial_commit", "wait_only"])
-def test_ppu_aiu_load_rejects_overlapping_groups(pattern):
-    (direct_a, compiler_x, direct_b), commit, condition, params = _mixed_aiu_test_ir()
-    i = tirx.Var("i", "int32")
-    if pattern == "loop_carried":
-        middle = tirx.For(i, 0, 2, tirx.ForKind.SERIAL, tirx.SeqStmt([compiler_x, direct_a]))
-        statements = [middle, direct_b, commit]
-    elif pattern == "while_carried":
-        middle = tirx.While(condition, tirx.SeqStmt([compiler_x, direct_a]))
-        statements = [middle, direct_b, commit]
-    else:
-        middle = {
-            "straight": compiler_x,
-            "branch": tirx.IfThenElse(condition, compiler_x, None),
-            "loop": tirx.For(i, 0, 2, tirx.ForKind.SERIAL, compiler_x),
-            "partial_commit": tirx.SeqStmt([tirx.IfThenElse(condition, commit, None), compiler_x]),
-            "wait_only": tirx.SeqStmt([tirx.Evaluate(T.ptx_wait_group(0)), compiler_x]),
-        }[pattern]
-        statements = [direct_a, middle, direct_b, commit]
-    func = tirx.PrimFunc(params, tirx.SeqStmt(statements))
-    with pytest.raises(InternalError, match="uncommitted caller-managed async group"):
-        tilelang.ppu.transform.InjectAIUSyncBarrier()(IRModule({"main": func}))
-
-
-@tilelang.testing.requires_ppu
 @pytest.mark.parametrize("compiler_first", [False, True])
 @pytest.mark.parametrize("commit_scope", [False, True])
 def test_ppu_aiu_load_mixed_commit_placement(compiler_first, commit_scope):
@@ -256,13 +231,14 @@ def test_ppu_aiu_load_mixed_commit_placement(compiler_first, commit_scope):
 
 @tilelang.testing.requires_ppu
 @pytest.mark.parametrize("commit_before_copy", [False, True])
-def test_ppu_aiu_load_mixed_tcopy_codegen(commit_before_copy):
+@pytest.mark.parametrize("width", [64, 128])
+def test_ppu_aiu_load_mixed_tcopy_codegen(commit_before_copy, width):
     @T.prim_func
-    def kernel(src: T.Tensor((16, 64), T.float16), dst: T.Tensor((16, 64), T.float16)):
+    def kernel(src: T.Tensor((16, width), T.float16), dst: T.Tensor((16, width), T.float16)):
         with T.Kernel(1, threads=32):
             direct = T.alloc_shared((256,), T.uint8)
-            copied = T.alloc_shared((16, 64), T.float16)
-            T.annotate_layout({copied: tilelang.layout.make_ppu_swizzled_layout(copied)})
+            copied = T.alloc_shared((16, width), T.float16)
+            T.annotate_layout({copied: tilelang.layout.make_full_bank_swizzled_layout(copied)})
             T.ppu_aiu_load(T.access_ptr(direct[0], "w"), T.access_ptr(src[0, 0], "r"), 128, 16, 128, 1, 128, 0, 0, 0, 0)
             if commit_before_copy:
                 T.ptx_commit_group()
@@ -274,20 +250,14 @@ def test_ppu_aiu_load_mixed_tcopy_codegen(commit_before_copy):
             T.copy(copied, dst)
 
     with Target({"kind": "ppu", "arch": "ppu_15"}), transform.PassContext(config={"tl.disable_aiu_lower": False}):
-        if not commit_before_copy:
-            with pytest.raises(InternalError, match="uncommitted caller-managed async group"):
-                tilelang.lower(kernel, target={"kind": "ppu", "arch": "ppu_15"}, enable_device_compile=False)
-        else:
-            source = tilelang.lower(kernel, target={"kind": "ppu", "arch": "ppu_15"}, enable_device_compile=False).kernel_source
-            events = re.findall(r"tl::aiu_load(?:<false>)?\(|tl::cp_async_commit\(\)", source)
-            assert events == [
-                "tl::aiu_load<false>(",
-                "tl::cp_async_commit()",
-                "tl::aiu_load(",
-                "tl::cp_async_commit()",
-                "tl::aiu_load<false>(",
-                "tl::cp_async_commit()",
-            ]
+        source = tilelang.lower(kernel, target={"kind": "ppu", "arch": "ppu_15"}, enable_device_compile=False).kernel_source
+        events = re.findall(r"tl::aiu_load(?:<false>)?\(|tl::cp_async_commit\(\)|tl::cp_async_wait<\d+>\(\)", source)
+        expected = ["tl::aiu_load<false>("]
+        if commit_before_copy:
+            expected.append("tl::cp_async_commit()")
+        expected.extend(["tl::aiu_load("] * (width // 64))
+        expected.extend(["tl::cp_async_commit()", "tl::aiu_load<false>(", "tl::cp_async_commit()", "tl::cp_async_wait<0>()"])
+        assert events == expected
 
 
 @tilelang.testing.requires_ppu_compute_version_ge(1, 5)

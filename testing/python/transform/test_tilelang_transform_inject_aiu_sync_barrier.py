@@ -17,7 +17,7 @@ Scenarios covered:
 import re
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 import tilelang.testing
 from tilelang.transform import PassConfigKey
 
@@ -48,8 +48,8 @@ def _stage0_gemm_kernel(block_M=128, block_N=128, block_K=64):
 
             T.clear(C_local)
             for ko in T.Pipelined(T.ceildiv(K, block_K), num_stages=0):
-                T.copy(A[by * block_M, ko * block_K], A_shared)
-                T.copy(B[ko * block_K, bx * block_N], B_shared)
+                T.copy(A[by * block_M, ko * block_K], A_shared, prefer_instruction="aiu")
+                T.copy(B[ko * block_K, bx * block_N], B_shared, prefer_instruction="aiu")
                 T.gemm(A_shared, B_shared, C_local)
 
             T.copy(C_local, C[by * block_M, bx * block_N])
@@ -80,12 +80,12 @@ def _prefetch_kernel(block_M=128, block_N=128, block_K=64):
 
             T.clear(out_local)
             # Pre-loop prefetch h
-            T.copy(H[by * block_M, 0], h_shared)
+            T.copy(H[by * block_M, 0], h_shared, prefer_instruction="aiu")
 
             for i in T.Pipelined(num_iters, num_stages=0):
                 # Load v, k for current iteration
-                T.copy(V[i * block_K, bx * block_N], v_shared)
-                T.copy(K_buf[i * block_K, bx * block_N], k_shared)
+                T.copy(V[i * block_K, bx * block_N], v_shared, prefer_instruction="aiu")
+                T.copy(K_buf[i * block_K, bx * block_N], k_shared, prefer_instruction="aiu")
                 # Consume h (from pre-loop or previous iteration reload)
                 T.gemm(h_shared, v_shared, out_local)
                 T.gemm(h_shared, k_shared, out_local)
@@ -111,8 +111,8 @@ def _pipelined_gemm_kernel(block_M=128, block_N=128, block_K=64, num_stages=3):
 
             T.clear(C_local)
             for ko in T.Pipelined(T.ceildiv(K, block_K), num_stages=num_stages):
-                T.copy(A[by * block_M, ko * block_K], A_shared)
-                T.copy(B[ko * block_K, bx * block_N], B_shared)
+                T.copy(A[by * block_M, ko * block_K], A_shared, prefer_instruction="aiu")
+                T.copy(B[ko * block_K, bx * block_N], B_shared, prefer_instruction="aiu")
                 T.gemm(A_shared, B_shared, C_local)
 
             T.copy(C_local, C[by * block_M, bx * block_N])
@@ -165,10 +165,10 @@ def _no_prefetch_kernel(block_M=128, block_N=128, block_K=64):
 
             T.clear(out_local)
             # Pre-loop load (no reload inside loop)
-            T.copy(H[by * block_M, 0], h_shared)
+            T.copy(H[by * block_M, 0], h_shared, prefer_instruction="aiu")
 
             for i in T.Pipelined(num_iters, num_stages=0):
-                T.copy(B[i * block_K, bx * block_N], b_shared)
+                T.copy(B[i * block_K, bx * block_N], b_shared, prefer_instruction="aiu")
                 T.gemm(h_shared, b_shared, out_local)
 
             T.copy(out_local, Out[by * block_M, bx * block_N])
@@ -203,11 +203,11 @@ def _dynamic_extent_kv_kernel(block_M=128, block_N=128, block_K=64, num_stages=2
             S_cast = T.alloc_fragment((block_M, block_N), dtype)
             O_local = T.alloc_fragment((block_M, block_K), accum_dtype)
 
-            T.copy(Q[by * block_M, 0], Q_shared)
+            T.copy(Q[by * block_M, 0], Q_shared, prefer_instruction="aiu")
             T.clear(O_local)
             loop_range = T.ceildiv(real_k, block_N)
             for ko in T.Pipelined(loop_range, num_stages=num_stages):
-                T.copy(K_mat[ko * block_N, 0], K_shared)
+                T.copy(K_mat[ko * block_N, 0], K_shared, prefer_instruction="aiu")
                 T.clear(S_local)
                 T.gemm(
                     Q_shared,
@@ -217,7 +217,7 @@ def _dynamic_extent_kv_kernel(block_M=128, block_N=128, block_K=64, num_stages=2
                     policy=T.GemmWarpPolicy.FullRow,
                 )
                 T.copy(S_local, S_cast)
-                T.copy(V_mat[ko * block_N, 0], V_shared)
+                T.copy(V_mat[ko * block_N, 0], V_shared, prefer_instruction="aiu")
                 T.gemm(
                     S_cast,
                     V_shared,
@@ -255,10 +255,10 @@ def _if_else_aiu_load_kernel(block_M=128, block_N=128, block_K=64):
             # Both branches load a different A tile into the same shared
             # buffer, so the aiu_load (and its commit) must stay in-branch.
             if flag > 0:
-                T.copy(A[by * block_M, 0], A_shared)
+                T.copy(A[by * block_M, 0], A_shared, prefer_instruction="aiu")
             else:
-                T.copy(A[by * block_M, block_K], A_shared)
-            T.copy(B[0, bx * block_N], B_shared)
+                T.copy(A[by * block_M, block_K], A_shared, prefer_instruction="aiu")
+            T.copy(B[0, bx * block_N], B_shared, prefer_instruction="aiu")
             T.gemm(A_shared, B_shared, C_local)
 
             T.copy(C_local, C[by * block_M, bx * block_N])

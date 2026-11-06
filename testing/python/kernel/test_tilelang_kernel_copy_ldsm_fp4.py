@@ -3,7 +3,7 @@
 import torch
 
 import tilelang
-import tilelang.language as T
+import tilelang.ppu.language as T
 import tilelang.testing
 from tilelang.transform import PassConfigKey
 from tilelang.layout import (
@@ -64,6 +64,7 @@ def _run(matrix, swizzled):
     )
     source = kernel.get_kernel_source()
     if swizzled:
+        assert "tl::aiu_load(" in source
         assert "tl::tix_ldmatrix_swzl_x4(" in source
     else:
         assert "tl::tix_ldmatrix_x4(" in source

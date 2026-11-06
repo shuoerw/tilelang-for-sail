@@ -27,7 +27,7 @@ from tilelang.transform import PassConfigKey
 M = N = K = 256
 
 
-def gemm_fp8_kernel(block_M, block_N, block_K, dtype=T.float8_e4m3, accum_dtype=T.float32):
+def gemm_fp8_kernel(block_M, block_N, block_K, dtype=T.float8_e4m3fn, accum_dtype=T.float32):
     """Construct an FP8 TN-form GEMM prim_func with the given tile sizes."""
 
     @T.prim_func
@@ -69,6 +69,7 @@ def compile_and_verify(block_M, block_N, block_K):
     ref_c = a.to(torch.float32) @ b.to(torch.float32).t()
 
     source = kernel.get_kernel_source()
+    assert "tl::aiu_load(" in source
     return c, ref_c, source
 
 

@@ -113,6 +113,7 @@ def compile_and_verify(block_M, block_N, block_K):
     ref_c = (a_f32 @ b_f32.T).to(c.device)
 
     source = kernel.get_kernel_source()
+    assert "tl::aiu_load(" in source
     return c, ref_c, source
 
 
