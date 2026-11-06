@@ -23,6 +23,7 @@
 #include <tvm/tirx/builtin.h>
 #include <tvm/tirx/expr.h>
 #include <tvm/tirx/op.h>
+#include <tvm/tirx/op_attr_types.h>
 #include <tvm/tirx/stmt.h>
 #include <tvm/tirx/stmt_functor.h>
 #include <tvm/tirx/transform.h>
@@ -46,6 +47,10 @@ using ffi::Optional;
 using ffi::String;
 
 namespace {
+
+using VarSet = std::unordered_set<Var, ffi::ObjectPtrHash, ffi::ObjectPtrEqual>;
+using BufferSlotMap =
+    std::unordered_map<Var, Buffer, ffi::ObjectPtrHash, ffi::ObjectPtrEqual>;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -106,7 +111,7 @@ static std::string GetBufferScope(const Buffer &buf) {
 
 class LdmatrixDestCollector : public StmtExprVisitor {
 public:
-  std::unordered_set<const VarNode *> dest_data_vars;
+  VarSet dest_data_vars;
 
   void VisitExpr_(const CallNode *op) final {
     std::string name = GetOpName(op->op);
@@ -127,7 +132,7 @@ private:
   void RecordFromAccessPtr(const PrimExpr &expr) {
     PostOrderVisit(expr, [this](const ObjectRef &obj) {
       if (const auto *load = obj.as<BufferLoadNode>()) {
-        dest_data_vars.insert(load->buffer->data.get());
+        dest_data_vars.insert(load->buffer->data);
       }
     });
   }
@@ -139,12 +144,12 @@ private:
 
 class SharedToLocalLoadCollector : public StmtExprVisitor {
 public:
-  std::unordered_set<const VarNode *> dest_data_vars;
+  VarSet dest_data_vars;
 
   void VisitStmt_(const BufferStoreNode *op) final {
     std::string scope = GetBufferScope(op->buffer);
     if (scope == "local" && ExprReadsNonLocal(op->value)) {
-      dest_data_vars.insert(op->buffer->data.get());
+      dest_data_vars.insert(op->buffer->data);
     }
     StmtExprVisitor::VisitStmt_(op);
   }
@@ -173,33 +178,18 @@ private:
 class BufferRouteInjector : public StmtExprMutator {
 public:
   // slot_map: original data var → slot Buffer
-  explicit BufferRouteInjector(
-      const std::unordered_map<const VarNode *, Buffer> &slot_map)
+  explicit BufferRouteInjector(const BufferSlotMap &slot_map)
       : slot_map_(slot_map) {}
 
-  PrimExpr VisitExpr_(const BufferLoadNode *op) final {
-    Array<PrimExpr> indices;
-    for (const auto &idx : op->indices) {
-      indices.push_back(VisitExpr(idx));
-    }
-    auto it = slot_map_.find(op->buffer->data.get());
+  Buffer VisitBufferUse(const Buffer &buffer) final {
+    Buffer routed = StmtExprMutator::VisitBufferUse(buffer);
+    auto it = slot_map_.find(routed->data);
     if (it != slot_map_.end()) {
-      return BufferLoad(it->second, indices);
+      // Preserve view dtype and indexing; only change the storage slot.
+      routed.CopyOnWrite()->data = it->second->data;
+      buffer_remap_.Set(buffer, routed);
     }
-    return BufferLoad(op->buffer, indices);
-  }
-
-  Stmt VisitStmt_(const BufferStoreNode *op) final {
-    PrimExpr value = VisitExpr(op->value);
-    Array<PrimExpr> indices;
-    for (const auto &idx : op->indices) {
-      indices.push_back(VisitExpr(idx));
-    }
-    auto it = slot_map_.find(op->buffer->data.get());
-    if (it != slot_map_.end()) {
-      return BufferStore(it->second, value, indices);
-    }
-    return BufferStore(op->buffer, value, indices);
+    return routed;
   }
 
   PrimExpr VisitExpr_(const CallNode *op) final {
@@ -213,7 +203,7 @@ public:
       for (size_t idx = 0; idx < op->args.size(); idx++) {
         const auto *var_node = op->args[idx].as<VarNode>();
         if (var_node) {
-          auto it = slot_map_.find(var_node);
+          auto it = slot_map_.find(GetRef<Var>(var_node));
           if (it != slot_map_.end()) {
             args.Set(idx, it->second->data);
           }
@@ -224,7 +214,7 @@ public:
   }
 
 private:
-  const std::unordered_map<const VarNode *, Buffer> &slot_map_;
+  const BufferSlotMap &slot_map_;
 };
 
 // ---------------------------------------------------------------------------
@@ -246,15 +236,13 @@ static bool StmtContainsLdmatrixOp(const Stmt &stmt) {
 }
 
 // Helper: check if a statement writes to any of the given data vars
-static bool
-StmtWritesAny(const Stmt &stmt,
-              const std::unordered_set<const VarNode *> &data_vars) {
+static bool StmtWritesAny(const Stmt &stmt, const VarSet &data_vars) {
   bool found = false;
   PostOrderVisit(stmt, [&found, &data_vars](const ObjectRef &obj) {
     if (found)
       return;
     if (const auto *store = obj.as<BufferStoreNode>()) {
-      if (data_vars.count(store->buffer->data.get())) {
+      if (data_vars.count(store->buffer->data)) {
         found = true;
       }
     }
@@ -264,10 +252,26 @@ StmtWritesAny(const Stmt &stmt,
 
 // A statement is a "load" if it issues ldmatrix OR stores into a ping-pong
 // buffer
-static bool
-StmtIsLoad(const Stmt &stmt,
-           const std::unordered_set<const VarNode *> &pingpong_vars) {
+static bool StmtIsLoad(const Stmt &stmt, const VarSet &pingpong_vars) {
   return StmtContainsLdmatrixOp(stmt) || StmtWritesAny(stmt, pingpong_vars);
+}
+
+// Slot storage must be private to the rewritten loop, including through views
+// and raw pointers used by surrounding initialization or epilogue statements.
+static bool ReferencesAny(const Stmt &stmt, const VarSet &data_vars) {
+  bool found = false;
+  PostOrderVisit(stmt, [&](const ObjectRef &obj) {
+    if (const auto *load = obj.as<BufferLoadNode>()) {
+      found |= data_vars.count(load->buffer->data) != 0;
+    } else if (const auto *store = obj.as<BufferStoreNode>()) {
+      found |= data_vars.count(store->buffer->data) != 0;
+    } else if (const auto *decl = obj.as<DeclBufferNode>()) {
+      found |= data_vars.count(decl->buffer->data) != 0;
+    } else if (auto var = obj.as<Var>()) {
+      found |= data_vars.count(var.value()) != 0;
+    }
+  });
+  return found;
 }
 
 // Only reorder understood memory operations. Unknown calls, barriers, and
@@ -275,15 +279,20 @@ StmtIsLoad(const Stmt &stmt,
 class PipelineAccesses : public StmtExprVisitor {
 public:
   bool safe = true;
-  std::unordered_set<const VarNode *> reads, writes;
+  VarSet reads, writes;
+
+  void VisitExpr_(const VarNode *op) final {
+    if (op->dtype.is_handle())
+      reads.insert(GetRef<Var>(op));
+  }
 
   void VisitExpr_(const BufferLoadNode *op) final {
-    reads.insert(op->buffer->data.get());
+    reads.insert(op->buffer->data);
     StmtExprVisitor::VisitExpr_(op);
   }
 
   void VisitStmt_(const BufferStoreNode *op) final {
-    writes.insert(op->buffer->data.get());
+    writes.insert(op->buffer->data);
     StmtExprVisitor::VisitStmt_(op);
   }
 
@@ -305,7 +314,7 @@ public:
       PostOrderVisit(op->args[dst], [&](const ObjectRef &obj) {
         if (const auto *load = obj.as<BufferLoadNode>()) {
           found = true;
-          writes.insert(load->buffer->data.get());
+          writes.insert(load->buffer->data);
           for (const PrimExpr &index : load->indices)
             VisitExpr(index);
         }
@@ -322,13 +331,20 @@ public:
       for (const PrimExpr &arg : op->args) {
         if (const auto *var = arg.as<VarNode>();
             var && var->dtype.is_handle()) {
-          reads.insert(var);
-          writes.insert(var);
+          reads.insert(GetRef<Var>(var));
+          writes.insert(GetRef<Var>(var));
         }
       }
-    } else if (name != "tl.access_ptr" &&
-               SideEffect(GetRef<Call>(op)) > CallEffectKind::kPure) {
-      safe = false;
+    } else if (name != "tl.access_ptr") {
+      // Inspect the callee's effect separately from argument reads. Pure
+      // register operations such as byte_perm may take BufferLoad arguments;
+      // the normal visitor records those reads for dependency checks.
+      static auto effects = Op::GetAttrMap<TCallEffectKind>("TCallEffectKind");
+      auto callee = op->op.as<Op>();
+      if (!callee || !effects.count(callee.value()) ||
+          effects[callee.value()]->value !=
+              static_cast<int>(CallEffectKind::kPure))
+        safe = false;
     }
     StmtExprVisitor::VisitExpr_(op);
   }
@@ -362,9 +378,8 @@ static Stmt MakeSeq(const Array<Stmt> &stmts) {
 // Helper: Instantiate statements for a concrete ki value + slot routing
 // ---------------------------------------------------------------------------
 
-static Stmt
-Instantiate(const Array<Stmt> &stmts, const Var &loop_var, int64_t k_val,
-            const std::unordered_map<const VarNode *, Buffer> &slot_map) {
+static Stmt Instantiate(const Array<Stmt> &stmts, const Var &loop_var,
+                        int64_t k_val, const BufferSlotMap &slot_map) {
   Stmt body = MakeSeq(stmts);
   // Substitute loop variable with constant
   Map<Var, PrimExpr> vmap;
@@ -397,16 +412,16 @@ static Buffer CreateSlotBuffer(const Buffer &original, int slot_id) {
 // Helper: Strip annotation from a For loop
 // ---------------------------------------------------------------------------
 
-static Stmt StripForAnnotation(const ForNode *op) {
+static Stmt StripForAnnotation(const For &op) {
   Map<String, ffi::Any> anns;
   for (const auto &kv : op->annotations) {
     if (kv.first != kRegisterPipelineStage) {
       anns.Set(kv.first, kv.second);
     }
   }
-  auto n = ffi::make_object<ForNode>(*op);
-  n->annotations = std::move(anns);
-  return Stmt(n);
+  For loop = op;
+  loop.CopyOnWrite()->annotations = std::move(anns);
+  return loop;
 }
 
 // ---------------------------------------------------------------------------
@@ -416,12 +431,20 @@ static Stmt StripForAnnotation(const ForNode *op) {
 class RegisterPingPongRewriter : public StmtMutator {
 public:
   Stmt VisitStmt_(const SBlockNode *op) final {
-    // Check if body is directly an annotated For loop
-    const ForNode *ann_loop = op->body.as<ForNode>();
-    bool body_is_annotated =
-        ann_loop && ann_loop->annotations.count(kRegisterPipelineStage);
+    // Keep initialization and epilogue statements in place. Multiple pipeline
+    // loops sharing one allocation scope need separate lifetime analysis.
+    Array<Stmt> block_stmts = FlattenSeq(op->body);
+    Optional<For> annotated_loop;
+    int pipeline_loops = 0;
+    for (const Stmt &stmt : block_stmts) {
+      if (auto loop = stmt.as<For>();
+          loop && loop.value()->annotations.count(kRegisterPipelineStage)) {
+        annotated_loop = loop;
+        ++pipeline_loops;
+      }
+    }
 
-    if (!body_is_annotated) {
+    if (pipeline_loops != 1) {
       // Not our target — recurse normally into body to find nested SBlocks
       Stmt body = VisitStmt(op->body);
       Optional<Stmt> init;
@@ -437,15 +460,16 @@ public:
                     op->annotations);
     }
 
-    // === This SBlock's body IS an annotated For loop — process locally ===
+    For ann_loop = annotated_loop.value();
+    SBlock block = GetRef<SBlock>(op);
 
     // Get stage from annotation
     auto stage_opt = ann_loop->annotations.Get(kRegisterPipelineStage);
     if (!stage_opt)
-      return StripAndReturn(op, ann_loop);
+      return StripAndReturn(block, ann_loop);
     auto stage_val = GetAnnotationInt(stage_opt.value());
     if (!stage_val.has_value() || stage_val.value() <= 1) {
-      return StripAndReturn(op, ann_loop);
+      return StripAndReturn(block, ann_loop);
     }
     int stage = static_cast<int>(stage_val.value());
 
@@ -455,13 +479,13 @@ public:
         (ann_loop->kind != ForKind::kSerial &&
          ann_loop->kind != ForKind::kUnrolled) ||
         op->init.defined() || !op->match_buffers.empty()) {
-      return StripAndReturn(op, ann_loop);
+      return StripAndReturn(block, ann_loop);
     }
 
     // Get extent
     const auto *extent_imm = ann_loop->extent.as<IntImmNode>();
     if (!extent_imm || extent_imm->value <= 1) {
-      return StripAndReturn(op, ann_loop);
+      return StripAndReturn(block, ann_loop);
     }
     int num_ki = static_cast<int>(extent_imm->value);
     int factor = std::min(stage, num_ki);
@@ -472,62 +496,82 @@ public:
     SharedToLocalLoadCollector stl_collector;
     stl_collector(ann_loop->body);
 
-    std::unordered_set<const VarNode *> pingpong;
+    VarSet pingpong;
     pingpong.insert(ld_collector.dest_data_vars.begin(),
                     ld_collector.dest_data_vars.end());
     pingpong.insert(stl_collector.dest_data_vars.begin(),
                     stl_collector.dest_data_vars.end());
 
     if (pingpong.empty())
-      return StripAndReturn(op, ann_loop);
+      return StripAndReturn(block, ann_loop);
+    for (const Stmt &stmt : block_stmts) {
+      if (!stmt.same_as(ann_loop) && ReferencesAny(stmt, pingpong))
+        return StripAndReturn(block, ann_loop);
+    }
     for (const auto &region : op->reads) {
-      if (pingpong.count(region->buffer->data.get()))
-        return StripAndReturn(op, ann_loop);
+      if (pingpong.count(region->buffer->data))
+        return StripAndReturn(block, ann_loop);
     }
     for (const auto &region : op->writes) {
-      if (pingpong.count(region->buffer->data.get()))
-        return StripAndReturn(op, ann_loop);
+      if (pingpong.count(region->buffer->data))
+        return StripAndReturn(block, ann_loop);
     }
 
     // Build slot_buffers from THIS SBlock's alloc_buffers
-    std::unordered_map<const VarNode *, std::vector<Buffer>> slot_buffers;
+    std::unordered_map<Var, std::vector<Buffer>, ffi::ObjectPtrHash,
+                       ffi::ObjectPtrEqual>
+        slot_buffers;
     for (const Buffer &buf : op->alloc_buffers) {
-      if (!pingpong.count(buf->data.get()))
+      if (!pingpong.count(buf->data))
         continue;
+      if (GetBufferScope(buf) != "local")
+        return StripAndReturn(block, ann_loop);
       std::vector<Buffer> bufs;
       bufs.reserve(factor);
       for (int slot = 0; slot < factor; slot++) {
         bufs.push_back(CreateSlotBuffer(buf, slot));
       }
-      slot_buffers[buf->data.get()] = std::move(bufs);
+      slot_buffers[buf->data] = std::move(bufs);
     }
 
     // Only proceed if every ping-pong buffer has a matching allocation
     if (slot_buffers.size() != pingpong.size()) {
-      return StripAndReturn(op, ann_loop);
+      return StripAndReturn(block, ann_loop);
     }
 
     // Split loop body into load / compute groups
     Var loop_var = ann_loop->loop_var;
     Array<Stmt> children = FlattenSeq(ann_loop->body);
-    std::unordered_set<const VarNode *> pp_vars;
+    VarSet pp_vars;
     for (const auto &[dvar, _] : slot_buffers) {
       pp_vars.insert(dvar);
     }
 
     Array<Stmt> load_stmts, compute_stmts;
+    PipelineAccesses preceding_computes;
     for (const auto &s : children) {
       if (StmtIsLoad(s, pp_vars)) {
-        if (!compute_stmts.empty())
-          return StripAndReturn(op, ann_loop);
+        // Chained RS prepares A in registers before loading B. Move the B load
+        // only when earlier computation neither reads nor writes its
+        // destination. Source dependencies and side effects are checked for
+        // both full groups below, including dependencies across consecutive ki
+        // iterations.
+        PipelineAccesses load;
+        load(s);
+        for (const Var &var : load.writes) {
+          if (preceding_computes.reads.count(var) ||
+              preceding_computes.writes.count(var))
+            return StripAndReturn(block, ann_loop);
+        }
         load_stmts.push_back(s);
       } else {
         compute_stmts.push_back(s);
+        preceding_computes(s);
       }
     }
 
     if (load_stmts.empty() || compute_stmts.empty()) {
-      return StripAndReturn(op, ann_loop);
+      return StripAndReturn(block, ann_loop);
     }
 
     PipelineAccesses loads, computes;
@@ -536,20 +580,20 @@ public:
     for (const Stmt &stmt : compute_stmts)
       computes(stmt);
     if (!loads.safe || !computes.safe)
-      return StripAndReturn(op, ann_loop);
-    for (const VarNode *var : loads.writes) {
+      return StripAndReturn(block, ann_loop);
+    for (const Var &var : loads.writes) {
       if (!pp_vars.count(var))
-        return StripAndReturn(op, ann_loop);
+        return StripAndReturn(block, ann_loop);
     }
-    for (const VarNode *var : loads.reads) {
+    for (const Var &var : loads.reads) {
       if (pp_vars.count(var) || computes.writes.count(var)) {
-        return StripAndReturn(op, ann_loop);
+        return StripAndReturn(block, ann_loop);
       }
     }
 
     // Build slot map for a given slot index
     auto build_slot_map = [&slot_buffers](int slot) {
-      std::unordered_map<const VarNode *, Buffer> smap;
+      BufferSlotMap smap;
       for (const auto &[dvar, bufs] : slot_buffers) {
         smap[dvar] = bufs[slot];
       }
@@ -585,7 +629,7 @@ public:
     // Build new alloc_buffers: replace ping-pong buffers with slot buffers
     Array<Buffer> new_allocs;
     for (const auto &buf : op->alloc_buffers) {
-      auto it = slot_buffers.find(buf->data.get());
+      auto it = slot_buffers.find(buf->data);
       if (it != slot_buffers.end()) {
         for (const auto &slot_buf : it->second) {
           new_allocs.push_back(slot_buf);
@@ -595,24 +639,28 @@ public:
       }
     }
 
-    Optional<Stmt> init;
-    if (op->init.defined())
-      init = op->init.value();
-
-    return SBlock(op->iter_vars, op->reads, op->writes, op->name_hint, new_body,
-                  init, new_allocs, op->match_buffers, op->annotations);
+    return ReplaceLoop(block, ann_loop, new_body, new_allocs);
   }
 
 private:
+  static Stmt ReplaceLoop(const SBlock &block, const For &loop,
+                          const Stmt &replacement,
+                          const Array<Buffer> &alloc_buffers) {
+    Array<Stmt> stmts = FlattenSeq(block->body);
+    for (size_t i = 0; i < stmts.size(); ++i) {
+      if (stmts[i].same_as(loop))
+        stmts.Set(i, replacement);
+    }
+    SBlock result = block;
+    auto *node = result.CopyOnWrite();
+    node->body = MakeSeq(stmts);
+    node->alloc_buffers = alloc_buffers;
+    return result;
+  }
+
   // Strip annotation and return the SBlock with original alloc_buffers
-  Stmt StripAndReturn(const SBlockNode *op, const ForNode *loop) {
-    Stmt stripped_loop = StripForAnnotation(loop);
-    Optional<Stmt> init;
-    if (op->init.defined())
-      init = op->init.value();
-    return SBlock(op->iter_vars, op->reads, op->writes, op->name_hint,
-                  stripped_loop, init, op->alloc_buffers, op->match_buffers,
-                  op->annotations);
+  Stmt StripAndReturn(const SBlock &op, const For &loop) {
+    return ReplaceLoop(op, loop, StripForAnnotation(loop), op->alloc_buffers);
   }
 };
 

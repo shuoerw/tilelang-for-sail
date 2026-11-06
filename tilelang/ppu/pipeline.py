@@ -98,6 +98,7 @@ def PPUPassPipelineBodyPrologue(mod: IRModule, target: Target) -> IRModule:
     # inference so inferred layouts see the final pipelined structure directly.
     mod = tilelang.transform.PipelinePlanning()(mod)
     mod = tilelang.transform.InjectSoftwarePipeline()(mod)
+    mod = tilelang.ppu.transform.SchedulePipelineCopies()(mod)
     mod = tilelang.transform.Simplify()(mod)
 
     # @PPU-specific: Annotate chained gemm (A from prior GEMM C).

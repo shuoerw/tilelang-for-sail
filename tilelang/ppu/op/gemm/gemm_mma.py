@@ -255,9 +255,8 @@ class PPUGemmMMA(GemmBase):
 
         assert is_full_region(C_region), "Fragment output C must be a full region"
 
-        annotations = getattr(self.gemm_node, "annotations", {})
-        use_register_pipeline = "register_pipeline" in annotations
-        pipeline_annotations = {"register_pipeline_stage": 2} if use_register_pipeline else {}
+        # Mark candidates; the pass validates whether loads can move safely.
+        pipeline_annotations = {"register_pipeline_stage": 2}
 
         sfa_local_size = (warp_rows + 3) // 4
         sfb_local_size = (warp_cols + 3) // 4

@@ -233,9 +233,10 @@ def test_scale_fragment_selection(case, operand):
     with PPU_TARGET, tvm.transform.PassContext(opt_level=3):
         source = tilelang.lower(program, target=PPU_TARGET).kernel_source
     assert "tl::mma_sync_scaled<" in source
-    expected_loads = 2 if case in ("aligned", "aligned_slice") else 0
-    assert source.count("tl::tix_ldmatrix_x1_trans(") == expected_loads
-    if not expected_loads:
+    expect_matrix_loads = case in ("aligned", "aligned_slice")
+    # Register pipelining duplicates load sites but preserves path selection.
+    assert ("tl::tix_ldmatrix_x1_trans(" in source) == expect_matrix_loads
+    if not expect_matrix_loads:
         mma_source = source[source.index("tl::mma_sync_scaled<") :]
         assert ("SFA[" if global_a else "SFA_shared)[") in mma_source
         assert ("SFB[" if global_b else "SFB_shared)[") in mma_source
