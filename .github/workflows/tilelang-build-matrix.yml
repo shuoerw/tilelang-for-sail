@@ -1,0 +1,491 @@
+# tilelang-for-sail/.github/workflows/tilelang-build-matrix.yml
+#
+# Composed per-version compile matrix: refs (branches) x single runtime
+# config (hggcrt3 pytorch image with preinstalled torch 2.13.0). Each entry
+# builds a tilelang wheel on one ZW-M890P pod, installs it and runs an
+# on-device smoke (elementwise-add @T.prim_func compiled and verified
+# against torch), then uploads the wheel as an artifact. The matrix is
+# composed by the prepare-matrix job from the workflow_dispatch input;
+# entries are NOT hand-listed.
+#
+# Nightly (schedule) builds the maintenance refs (dev, v0.1.11, v0.1.12,
+# v0.1.13, v0.1.14); refs whose commit is unchanged since the last
+# successful build (no PR merged, no direct push) are skipped, so an idle
+# branch costs no accelerator time. State lives on NAS; a branch with no
+# state file yet is always built.
+#
+# Modeled on triton-for-sail .github/workflows/triton-build-matrix.yml
+# (feature/ci-build-matrix), with the matrix dimension switched from
+# refs x runtime-configs to refs only: tilelang's runtime needs torch for
+# every codegen path (import tilelang itself hard-imports torch to preload
+# dlpack; the plain ppu: hggcrt2 image ships no torch and the oe torch
+# wheel is incompatible with the hggcrt3 SDK's libacblas), so a torchless
+# hggcrt2 config cannot even import the wheel, let alone smoke it.
+# The runtime config is still carried as a tag (hggcrt3) through the
+# matrix entries, safe_id / state files / artifact names and build
+# metadata, mirroring triton's per-config naming for traceability and
+# future config extension.
+#
+# Compile recipe follows this repo's ci.yml ppu-tests job (proven on the
+# same image family since v0.1.11):
+#   source /usr/local/PPU_SDK/envsetup.sh
+#   pip install wheel build setuptools cython packaging 'setuptools==68.1.2'
+#   NO_VERSION_LABEL=OFF python -m build --wheel && pip install dist/tilelang*.whl
+# with one deliberate deviation: NO_GIT_VERSION is NOT set, so the git
+# hash lands in the wheel version (tilelang-0.1.12+ppu.1.0.0.git<hash>).
+# dev and v0.1.12 share the 0.1.12 base version; without the hash their
+# wheel filenames would collide inside the merged publish artifact.
+#
+# Publishing: after every matrix entry passes, the per-entry wheel
+# artifacts are merged and published to a temporary wheel directory
+# through the reusable t-head/ci-infra push-tmp-wheel.yml template (same
+# channel as triton-for-sail triton-build-matrix.yml and DeepGEMM-for-sail
+# deepgemm-ut-upload-tmp.yml), gated on the suite so a failed entry keeps
+# its wheel as a run artifact only. Requires RELEASE_USERNAME /
+# RELEASE_TOKEN secrets (TEMPLATE_TOKEN falls back to github.token).
+
+name: TileLang Wheel Build On SAIL
+
+on:
+  schedule:
+    # Nightly at 12:30 UTC (20:30 Beijing): build the maintenance refs
+    # dev / v0.1.11 / v0.1.12 / v0.1.13 / v0.1.14, skipping every ref
+    # unchanged since the last successful build. Staggered +1h from the
+    # triton-for-sail nightly (11:30 UTC) so the two matrices do not queue
+    # on the same ZW-M890P board pool simultaneously. Schedules only run
+    # from the default branch, so this stays inert until the workflow
+    # lands on dev.
+    - cron: '30 12 * * *'
+  # Push trigger scoped to this feature branch ONLY: pushing the branch
+  # (i.e. landing or updating the workflow file) runs the full matrix
+  # end-to-end as a merge-gate validation, which workflow_dispatch cannot
+  # provide before the file exists on the default branch. GitHub Actions
+  # runs the workflow definition from the pushed commit, so this exercises
+  # exactly the file being validated. After the branch merges into dev the
+  # filter no longer matches and the trigger goes inert — pushes to dev do
+  # NOT start builds.
+  push:
+    branches:
+      - feature/ci-build-matrix
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: 'JSON array of refs (branches/tags) to build, e.g. ["dev","v0.1.14"]'
+        required: false
+        type: string
+        default: '["dev"]'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tilelang-build-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare-matrix:
+    name: Compose matrix (refs)
+    # Self-hosted pool (not ubuntu-latest): the nightly skip logic below
+    # reads last-built-commit state files from NAS. On this runner NAS is
+    # mounted at /wl_nas; PPU pods see the same volume at /mnt/wl_nas.
+    # Same container image the build job uses, so python3 + git are
+    # known-available here.
+    runs-on: k8s-runner-group-cpu-thead
+    container:
+      image: ghcr.io/actions/actions-runner:latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.compose.outputs.matrix }}
+    steps:
+      - name: Compose matrix entries
+        id: compose
+        shell: bash
+        env:
+          # Push-triggered validation runs build the pushed branch itself
+          # (the pushed workflow definition is what executes); nightly
+          # (schedule) runs build the maintenance refs; dispatched runs
+          # keep the documented default refs (["dev"]).
+          REFS: >-
+            ${{ github.event_name == 'push' && format('["{0}"]', github.ref_name)
+            || github.event_name == 'schedule' &&
+            '["dev","v0.1.11","v0.1.12","v0.1.13","v0.1.14"]'
+            || inputs.refs || '["dev"]' }}
+          EVENT_NAME: ${{ github.event_name }}
+          STATE_DIR: /wl_nas/devops/tilelang-build-matrix/state
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          matrix=$(python3 - "$REFS" "$EVENT_NAME" <<'PYEOF'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          refs = json.loads(sys.argv[1])
+          event_name = sys.argv[2]
+
+          if not isinstance(refs, list) or not refs or not all(isinstance(r, str) for r in refs):
+              raise SystemExit(f"refs must be a non-empty JSON array of strings, got: {refs!r}")
+
+          # Single runtime config: hggcrt3 pytorch image with preinstalled
+          # torch 2.13.0, compatible with the PPU SDK's libacblas (see the
+          # workflow header for why no torchless config exists).
+          IMAGE = "download.t-head.cn/docker_release/pytorch:sdk2.2.0-2.13.0-ubuntu24.04-hggcrt3-py312-20261005"
+          # Runtime-config tag carried into safe_id / state files / artifact
+          # names / build metadata (parity with triton-build-matrix's
+          # per-config tagging; single value because tilelang has only the
+          # hggcrt3 runtime config).
+          TAG = "hggcrt3"
+
+          # Nightly skip (schedule events only): an entry is skipped when the
+          # ref's current tip equals the commit of its last successful build
+          # (state file written by the build job on NAS) - i.e. no PR merged
+          # and no direct push landed since. Commit comparison is a superset
+          # of a "PRs merged since" check. Entries without a state file yet
+          # are always built. Non-schedule triggers never skip anything.
+          state_dir = os.environ.get("STATE_DIR")
+          tip_cache = {}
+
+          def ref_tip(ref):
+              if ref not in tip_cache:
+                  url = "https://x-access-token:{}@github.com/{}.git".format(
+                      os.environ["GITHUB_TOKEN"], os.environ["GITHUB_REPOSITORY"])
+                  # stderr is discarded so a failed ls-remote can never leak
+                  # the token-embedding URL into the log.
+                  proc = subprocess.run(["git", "ls-remote", url, ref],
+                                        capture_output=True, text=True, check=False)
+                  lines = [l for l in proc.stdout.splitlines() if l.strip()]
+                  if proc.returncode != 0 or not lines:
+                      raise SystemExit(f"git ls-remote failed for ref {ref!r}")
+                  tip_cache[ref] = lines[0].split()[0]
+              return tip_cache[ref]
+
+          def last_built(safe_id):
+              try:
+                  with open(os.path.join(state_dir, safe_id + ".commit")) as f:
+                      return f.read().strip()
+              except OSError:
+                  return None
+
+          entries = []
+          skipped = []
+          for ref in refs:
+              # Must match the pod-side writer key: SAFE_ID="$REF_SLUG-$TAG"
+              # (state/<refslug>-hggcrt3.commit). Reader and writer must share
+              # the tag or nightly skip state is never found and every ref
+              # rebuilds every night.
+              safe_id = ref.replace("/", "-") + "-" + TAG
+              if event_name == "schedule":
+                  built = last_built(safe_id)
+                  if built is not None and built == ref_tip(ref):
+                      skipped.append(f"{ref} (tip {built[:9]} unchanged since last successful build)")
+                      continue
+              entries.append({"ref": ref, "image": IMAGE, "tag": TAG})
+
+          print(json.dumps(entries))
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary and (entries or skipped):
+              with open(summary, "a") as f:
+                  f.write("## Matrix composition\n\n")
+                  for e in entries:
+                      f.write(f"- BUILD: {e['ref']} ({e['tag']})\n")
+                  for s in skipped:
+                      f.write(f"- SKIP: {s}\n")
+          if skipped:
+              # Diagnostics go to stderr: stdout is captured into the
+              # "matrix" job output and must stay a single pure-JSON line
+              # (a multi-line value written via plain `echo "k=$v"` is an
+              # invalid output-file format and can fail the compose step).
+              print("[nightly] skipped (no PR merged / no direct push since last successful build):", file=sys.stderr)
+              for s in skipped:
+                  print("  - " + s, file=sys.stderr)
+          PYEOF
+          )
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Composed matrix:" && echo "$matrix"
+
+  build-wheel:
+    name: Build wheel (${{ matrix.entry.ref }})
+    # An all-skip nightly composes "[]" — GitHub Actions rejects an empty
+    # matrix vector ("Matrix vector ... does not contain any values")
+    # instead of skipping the job, so gate explicitly; a skipped build
+    # cascades to skipped merge/push/result and a green no-op run.
+    if: ${{ needs.prepare-matrix.outputs.matrix != '[]' }}
+    needs: prepare-matrix
+    runs-on: k8s-runner-group-cpu-thead
+    container:
+      image: ghcr.io/actions/actions-runner:latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+    steps:
+      - name: Compute ref slug
+        id: ref
+        shell: bash
+        run: |
+          SAFE_REF=$(printf '%s' '${{ matrix.entry.ref }}' | tr '/' '-')
+          echo "safe_id=${SAFE_REF}-${{ matrix.entry.tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout (${{ matrix.entry.ref }})
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.entry.ref }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Build wheel on PPU
+        id: ppu-build
+        uses: t-head/ci-infra/cluster-run@main
+        with:
+          image: ${{ matrix.entry.image }}
+          nnodes: 0
+          nproc_per_node: 1
+          node_selector: "board-type=ZW-M890P"
+          namespace: ppu-sched
+          host_volumes: /wl_nas:/mnt/wl_nas
+          timeout_minutes: 300
+          cleanup_policy: on_success
+          command: |
+            set -euo pipefail
+            cd /workspace/source
+
+            git config --global --add safe.directory '*'
+            # The image bakes in PIP_INDEX_URL pointing at an unreachable
+            # internal server; unset it (same as this repo's ci.yml).
+            unset PIP_INDEX_URL
+            git config --global --unset-all url.https://ai-gerrit.eng.t-head.cn/Public/Github/.insteadOf 2>/dev/null || true
+
+            # PPU SDK is pre-installed in the docker image
+            source /usr/local/PPU_SDK/envsetup.sh
+            echo "[INFO] PPU_SDK=$PPU_SDK"
+
+            # ── Uninstall any image-bundled tilelang before building from source ──
+            echo "[INFO] tilelang-related packages before uninstall:"; pip list 2>/dev/null | grep -i tilelang || true
+            pip uninstall -y tilelang 2>/dev/null || true
+            # Post-uninstall assertion (run from a neutral cwd so the source
+            # tree can never satisfy the import)
+            if (cd "$HOME" && python -c "import tilelang" 2>/dev/null); then
+              echo "[FATAL] tilelang is STILL importable after uninstall:"
+              (cd "$HOME" && python -c "import tilelang; print(tilelang.__file__)") || true
+              SP=$(python -c "import sys; print(next((p for p in sys.path if p.endswith('site-packages')), ''))" 2>/dev/null || true)
+              if [ -n "$SP" ]; then
+                rm -rf "$SP"/tilelang "$SP"/tilelang-*.dist-info "$SP"/tilelang-*.egg-info "$SP"/__editable__*tilelang* "$SP"/*tilelang*.pth 2>/dev/null || true
+              fi
+              if (cd "$HOME" && python -c "import tilelang" 2>/dev/null); then
+                echo "[FATAL] image-bundled tilelang could NOT be removed; aborting to guarantee a clean wheel build"; exit 1
+              fi
+              echo "[INFO] leftover tilelang removed from site-packages"
+            else
+              echo "[INFO] confirmed: no tilelang importable before build"
+            fi
+
+            # ── Build wheel (recipe from this repo's ci.yml ppu-tests) ──
+            pip install wheel build setuptools cython packaging 'setuptools==68.1.2'
+
+            # NO_GIT_VERSION is deliberately NOT set (unlike ci.yml): the
+            # git hash in the wheel version keeps filenames unique across
+            # refs sharing a base version (dev and v0.1.12 are both
+            # 0.1.12-based), which the merged publish artifact requires.
+            export NO_VERSION_LABEL=OFF
+
+            rm -rf build dist
+            LOG_FILE="build.log"
+            ERROR_LOG="error.log"
+            echo "START TO BUILD WHEEL"
+            set +e
+            python -m build --wheel > "$LOG_FILE" 2> "$ERROR_LOG"
+            BUILD_EXIT_CODE=$?
+            set -e
+            if [ "$BUILD_EXIT_CODE" -ne 0 ]; then
+              echo "Build failed with exit code $BUILD_EXIT_CODE"
+              cat "$ERROR_LOG"
+              echo "----- last 1000 lines of $LOG_FILE -----"
+              tail -n 1000 "$LOG_FILE"
+              exit 1
+            fi
+            echo "Build succeeded!"
+            tail -n 200 "$LOG_FILE"
+            echo "[INFO] wheel: $(cd dist && ls tilelang*.whl 2>/dev/null)"
+
+            # ── Runtime deps for import + smoke (subset of ci.yml ppu-tests) ──
+            pip install pyyaml==6.0.3 einops==0.8.1 ninja==1.13.0 mkl==2021.4.0 cuda-bindings==13.0 'z3-solver>=4.13.0,<4.15.5' tabulate
+            yes | pip uninstall nvidia-cuda-nvrtc 2>/dev/null || true
+            # Use the image-preinstalled torch/triton (hggcrt3 variant,
+            # compatible with the PPU SDK's libacblas). flash-attn is
+            # optional for the smoke.
+            pip install flash-attn 2>/dev/null || echo "[WARN] flash-attn not available, skipping"
+            apt-get update && apt-get install -y libopenmpi-dev 2>/dev/null || true
+
+            # ── Install the wheel and verify it is the one just built ──
+            pip install dist/tilelang*.whl
+            cd "$HOME"
+            python -c "import tilelang, sys; f=getattr(tilelang,'__file__',''); print('[INFO] tilelang.__file__ =', f); print('[INFO] tilelang.__version__ =', getattr(tilelang,'__version__','?')); sys.exit(0 if ('site-packages' in f or 'dist-packages' in f) else 1)" \
+              || { echo "[FATAL] imported tilelang is NOT the installed wheel (expected under site-packages)"; exit 1; }
+
+            # ── SMOKE: elementwise-add @T.prim_func compiled and verified on
+            # device (torch is preinstalled in the hggcrt3 image). The smoke
+            # script MUST live in a real file: @T.prim_func's eager AST
+            # builder calls inspect.getsourcelines() on the kernel function,
+            # which raises "OSError: could not get source code" for code fed
+            # via stdin (python3 - <<heredoc). Writing it under $HOME also
+            # keeps the staged source tree at /workspace/source from
+            # shadowing the installed wheel on sys.path; exercises wheel
+            # import -> TVM script parse -> PPU codegen -> on-device launch
+            # -> numerical verification against torch. Same compile/profiler
+            # pattern as testing/python/kernel/test_tilelang_kernel_gemm.py. ──
+            echo "START SMOKE"
+            cat > "$HOME/tilelang_nightly_smoke.py" <<'PYEOF'
+            import importlib.util
+            import tilelang
+            import tilelang.language as T
+
+            have_torch = importlib.util.find_spec("torch") is not None
+            print(f"[smoke] tilelang {getattr(tilelang, '__version__', '?')} from {tilelang.__file__}")
+            print(f"[smoke] torch available: {have_torch}")
+            assert have_torch, "no torch in image, on-device smoke impossible"
+
+            import torch
+            assert torch.cuda.is_available(), "no cuda/ppu device visible to torch"
+            print(f"[smoke] torch {torch.__version__}, device count: {torch.cuda.device_count()}")
+
+            N = 4096
+            BLOCK = 256
+
+            @T.prim_func
+            def add_kernel(
+                A: T.Tensor((N,), "float32"),
+                B: T.Tensor((N,), "float32"),
+                C: T.Tensor((N,), "float32"),
+            ):
+                with T.Kernel(T.ceildiv(N, BLOCK), threads=128) as bx:
+                    for i in T.Parallel(BLOCK):
+                        C[bx * BLOCK + i] = A[bx * BLOCK + i] + B[bx * BLOCK + i]
+
+            kernel = tilelang.compile(add_kernel, out_idx=[2])
+            profiler = kernel.get_profiler()
+
+            def ref(A, B):
+                return A + B
+
+            profiler.assert_allclose(ref, atol=1e-4, rtol=1e-4)
+            print("[smoke] SMOKE_OK: elementwise-add prim_func compiled and verified on device")
+            PYEOF
+            python3 "$HOME/tilelang_nightly_smoke.py"
+
+            # ── Stage wheel + build metadata on NAS for the runner to pick up ──
+            cd /workspace/source
+            REF_SLUG=$(printf '%s' '${{ matrix.entry.ref }}' | tr '/' '-')
+            SAFE_ID="$REF_SLUG-${{ matrix.entry.tag }}"
+            NAS_RESULT_DIR="/mnt/wl_nas/devops/tilelang-build-matrix/${{ github.run_id }}/${{ github.run_attempt }}/$SAFE_ID"
+            mkdir -p "$NAS_RESULT_DIR/wheels"
+            cp dist/*.whl "$NAS_RESULT_DIR/wheels/"
+            cp "$LOG_FILE" "$NAS_RESULT_DIR/" 2>/dev/null || true
+            TILELANG_VER=$(cd "$HOME" && python -c 'import tilelang; print(getattr(tilelang, "__version__", "unknown"))')
+            {
+              echo "ref=${{ matrix.entry.ref }}"
+              echo "config=${{ matrix.entry.tag }}"
+              echo "commit=$(git -C /workspace/source rev-parse HEAD)"
+              echo "image=${{ matrix.entry.image }}"
+              echo "tilelang_version=$TILELANG_VER"
+              echo "wheel=$(cd dist && ls tilelang*.whl 2>/dev/null | head -1)"
+              echo "smoke=PASS"
+            } > "$NAS_RESULT_DIR/build_meta.txt"
+            echo "[INFO] wheels staged at $NAS_RESULT_DIR/wheels"
+
+            # ── Record the built commit as nightly-skip state ──
+            # Written as pod root via /mnt/wl_nas: the runner container has
+            # no write permission on the root-owned matrix dir (it only reads
+            # state, which world-readable root-owned files allow). The pod
+            # command runs under set -e, so the state is only recorded when
+            # build + smoke + staging all succeeded; recorded on every
+            # trigger (nightly, manual, push-validation alike) so any
+            # successful build of a ref's tip saves the next nightly from
+            # rebuilding that unchanged tip.
+            STATE_DIR=/mnt/wl_nas/devops/tilelang-build-matrix/state
+            mkdir -p "$STATE_DIR"
+            printf '%s\n' "$(git -C /workspace/source rev-parse HEAD)" > "$STATE_DIR/$SAFE_ID.commit"
+            echo "[INFO] recorded $SAFE_ID state for nightly skip"
+
+      - name: Upload wheel (${{ matrix.entry.ref }})
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          # No run_attempt in per-entry names: "Re-run failed jobs" re-runs
+          # only failed entries, and the merge pattern below must still find
+          # the successful entries' artifacts from earlier attempts
+          # (overwrite: true replaces same-name artifacts on full re-runs).
+          name: tilelang-wheel-${{ github.run_id }}-${{ steps.ref.outputs.safe_id }}
+          path: /wl_nas/devops/tilelang-build-matrix/${{ github.run_id }}/${{ github.run_attempt }}/${{ steps.ref.outputs.safe_id }}/wheels/*.whl
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+          retention-days: 14
+
+      - name: Build summary (${{ matrix.entry.ref }})
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          NAS_RESULT_DIR="/wl_nas/devops/tilelang-build-matrix/${{ github.run_id }}/${{ github.run_attempt }}/${{ steps.ref.outputs.safe_id }}"
+          echo "## Build: ${{ matrix.entry.ref }} (${{ matrix.entry.tag }})" >> "$GITHUB_STEP_SUMMARY"
+          if [[ ! -f "$NAS_RESULT_DIR/build_meta.txt" ]]; then
+            echo "Build metadata not found: $NAS_RESULT_DIR/build_meta.txt (build failed before staging)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          cat "$NAS_RESULT_DIR/build_meta.txt" >> "$GITHUB_STEP_SUMMARY"
+
+  merge:
+    name: Merge wheel artifacts
+    # Every matrix entry must pass before anything is published.
+    needs: build-wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact_name: ${{ steps.artifact-name.outputs.artifact_name }}
+    steps:
+      - name: Set merged artifact name
+        id: artifact-name
+        shell: bash
+        run: |
+          echo "artifact_name=tilelang-wheels-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Merge wheel artifacts
+        uses: actions/upload-artifact/merge@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.artifact_name }}
+          # Attempt-less pattern: on "Re-run failed jobs" the retried entries
+          # land here together with earlier-attempt successes, so the merged
+          # batch always contains every matrix entry.
+          pattern: tilelang-wheel-${{ github.run_id }}-*
+          compression-level: 0
+          delete-merged: false
+
+  push:
+    name: Call temporary wheel upload template
+    needs: merge
+    uses: t-head/ci-infra/.github/workflows/push-tmp-wheel.yml@main
+    with:
+      # run_attempt moves when only the publishing job is rerun.
+      artifact_name: ${{ needs.merge.outputs.artifact_name }}
+      template_repository: t-head/ci-infra
+      template_ref: main
+    secrets:
+      release_username: ${{ secrets.RELEASE_USERNAME }}
+      release_token: ${{ secrets.RELEASE_TOKEN }}
+      template_token: ${{ secrets.TEMPLATE_TOKEN }}
+
+  result:
+    name: Show batch directory URL
+    needs: push
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write to logs and job summary
+        shell: bash
+        env:
+          UPLOAD_URL: ${{ needs.push.outputs.upload_url }}
+        run: |
+          set -euo pipefail
+          printf 'Batch directory: %s\n' "$UPLOAD_URL" | tee -a "$GITHUB_STEP_SUMMARY"
