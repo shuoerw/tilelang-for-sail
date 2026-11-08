@@ -23,7 +23,8 @@ def test_matrix_load_destinations_are_double_buffered(name):
     def ptr(buffer, index, mask):
         return T.Call("handle", tvm.ir.Op.get("tl.access_ptr"), [T.BufferLoad(buffer, [index]), 8, mask])
 
-    args = [T.IntImm("bool", 0), T.IntImm("int32", 4), ptr(shared, ki * 256, 1), ptr(local, 0, 2)]
+    num = 2 if name == "tl.tix_ldmatrix_b8" else 4
+    args = [T.IntImm("bool", 0), T.IntImm("int32", num), ptr(shared, ki * 256, 1), ptr(local, 0, 2)]
     if name.endswith("swzl"):
         args += [T.IntImm("int32", 0), T.IntImm("int32", 0)]
     load = T.Evaluate(T.Call("handle", tvm.ir.Op.get(name), args))
@@ -196,3 +197,183 @@ def test_register_setup_before_load_requires_independence(dependency):
         stores = []
         T.stmt_functor.post_order_visit(result.body, lambda n: stores.append(n) if isinstance(n, T.BufferStore) else None)
         assert [s.buffer.data.name for s in stores] == ["B_0", "B_1", "prepared", "output", "prepared", "output"]
+
+
+def _rewrite_loop(loop, shared, reg, output):
+    block = T.SBlock([], [], [], "gemm", loop, alloc_buffers=[reg, output])
+    func = T.PrimFunc([shared.data], T.SBlockRealize([], True, block))
+    before = tvm.IRModule({"main": func})
+    assert T.analysis.verify_ssa(func)
+    after = tilelang.ppu.transform.RegisterPingPongPipeline()(before)
+    assert T.analysis.verify_ssa(after["main"])
+    return before, after
+
+
+@pytest.mark.parametrize("pointer", ["raw", "nested", "access_ptr"])
+def test_all_accepted_pointer_expressions_use_slot_storage(pointer):
+    shared = T.decl_buffer((2,), "float32", name="shared", scope="shared")
+    reg = T.decl_buffer((1,), "float32", name="reg", scope="local")
+    output = T.decl_buffer((2,), "float32", name="output", scope="local")
+    k = T.Var("k", "int32")
+    load = T.BufferStore(reg, T.BufferLoad(shared, [k]), [0])
+    argument = reg.data
+    if pointer == "nested":
+        argument = T.call_pure_extern("handle", "forward_pointer", reg.data)
+    elif pointer == "access_ptr":
+        argument = T.Call("handle", tvm.ir.Op.get("tl.access_ptr"), [T.BufferLoad(reg, [0]), 1, 1])
+    compute = T.BufferStore(output, T.call_pure_extern("float32", "read_register", argument), [k])
+    loop = T.For(k, 0, 2, T.ForKind.SERIAL, T.SeqStmt([load, compute]), annotations={"register_pipeline_stage": 2})
+    _, after = _rewrite_loop(loop, shared, reg, output)
+    result = after["main"].body.block
+    assert [buf.name for buf in result.alloc_buffers] == ["reg_0", "reg_1", "output"]
+    consumers, old_references = [], []
+
+    def collect(node):
+        if isinstance(node, T.Var) and node.same_as(reg.data):
+            old_references.append(node)
+        if isinstance(node, T.BufferStore) and node.buffer.data.same_as(output.data):
+            consumers.append(node.value)
+
+    T.stmt_functor.post_order_visit(result.body, collect)
+    assert not old_references
+    assert len(consumers) == 2
+    for expr, slot in zip(consumers, result.alloc_buffers[:2]):
+        references = []
+        T.stmt_functor.post_order_visit(
+            expr,
+            lambda n, references=references, slot=slot: (
+                references.append(n)
+                if (isinstance(n, T.Var) and n.same_as(slot.data)) or (isinstance(n, T.BufferLoad) and n.buffer.data.same_as(slot.data))
+                else None
+            ),
+        )
+        assert references
+
+
+def _execute_scalar(func, shared, output):
+    memory = {shared.data: [10, 20, 30, 40]}
+    for buffer in func.body.block.alloc_buffers:
+        memory[buffer.data] = [None] * int(buffer.shape[0])
+    analyzer = tvm.arith.Analyzer()
+
+    def value(expr, bindings):
+        if isinstance(expr, T.BufferLoad):
+            result = memory[expr.buffer.data][value(expr.indices[0], bindings)]
+            assert result is not None
+            return result
+        return int(analyzer.simplify(T.stmt_functor.substitute(expr, bindings)))
+
+    def execute(stmt, bindings):
+        if isinstance(stmt, T.SeqStmt):
+            for child in stmt.seq:
+                execute(child, bindings)
+        elif isinstance(stmt, T.For):
+            start, extent = value(stmt.min, bindings), value(stmt.extent, bindings)
+            for i in range(start, start + extent):
+                execute(stmt.body, {**bindings, stmt.loop_var: i})
+        elif isinstance(stmt, T.BufferStore):
+            memory[stmt.buffer.data][value(stmt.indices[0], bindings)] = value(stmt.value, bindings)
+        else:
+            raise AssertionError(type(stmt))
+
+    execute(func.body.block.body, {})
+    return memory[output.data]
+
+
+@pytest.mark.parametrize("carried", [False, True])
+def test_register_values_preserve_iteration_semantics(carried):
+    shared = T.decl_buffer((4,), "float32", name="shared", scope="shared")
+    reg = T.decl_buffer((2,), "float32", name="reg", scope="local")
+    output = T.decl_buffer((4,), "float32", name="output", scope="local")
+    k = T.Var("k", "int32")
+    load = T.BufferStore(reg, T.BufferLoad(shared, [k]), [k // 2 if carried else 0])
+    compute = T.BufferStore(output, T.BufferLoad(reg, [0]), [k])
+    loop = T.For(k, 0, 4, T.ForKind.SERIAL, T.SeqStmt([load, compute]), annotations={"register_pipeline_stage": 2})
+    before, after = _rewrite_loop(loop, shared, reg, output)
+    expected = [10, 20, 20, 20] if carried else [10, 20, 30, 40]
+    assert _execute_scalar(before["main"], shared, output) == expected
+    assert _execute_scalar(after["main"], shared, output) == expected
+    assert isinstance(after["main"].body.block.body, T.For) == carried
+
+
+@pytest.mark.parametrize("consumer", ["element", "raw_pointer", "access_ptr", "typed_view", "overclaimed_load"])
+def test_matrix_load_requires_coverage_of_consumed_storage(consumer):
+    shared = T.decl_buffer((1024,), "float16", name="shared", scope="shared")
+    reg = T.decl_buffer((16,), "float16", name="reg", scope="local")
+    output = T.decl_buffer((2,), "float16", name="output", scope="local")
+    k = T.Var("k", "int32")
+
+    def ptr(buf, index, count, mask):
+        return T.Call("handle", tvm.ir.Op.get("tl.access_ptr"), [T.BufferLoad(buf, [index]), count, mask])
+
+    count = 16 if consumer == "overclaimed_load" else 8
+    load = T.Evaluate(T.Call("handle", tvm.ir.Op.get("tl.ptx_ldmatrix"), [False, 4, ptr(shared, k * 256, 8, 1), ptr(reg, 0, count, 2)]))
+    value = T.BufferLoad(reg, [8])
+    if consumer == "raw_pointer":
+        value = T.call_pure_extern("float16", "read_register", reg.data)
+    elif consumer == "access_ptr":
+        value = T.call_pure_extern("float16", "read_register", ptr(reg, 0, 16, 1))
+    elif consumer == "typed_view":
+        view = T.decl_buffer((8,), "float32", name="view", scope="local", data=reg.data)
+        value = T.Cast("float16", T.BufferLoad(view, [4]))
+    compute = T.BufferStore(output, value, [k])
+    loop = T.For(k, 0, 2, T.ForKind.SERIAL, T.SeqStmt([load, compute]), annotations={"register_pipeline_stage": 2})
+    _, after = _rewrite_loop(loop, shared, reg, output)
+    result = after["main"].body.block
+    assert isinstance(result.body, T.For)
+    assert tvm.ir.structural_equal(result.body.body, loop.body)
+    assert [b.name for b in result.alloc_buffers] == ["reg", "output"]
+
+
+def test_nested_loops_have_independent_ssa_variables():
+    shared = T.decl_buffer((4,), "float32", name="shared", scope="shared")
+    reg = T.decl_buffer((2,), "float32", name="reg", scope="local")
+    output = T.decl_buffer((4,), "float32", name="output", scope="local")
+    k, i, j = [T.Var(name, "int32") for name in ("k", "i", "j")]
+    load = T.For(i, 0, 2, T.ForKind.SERIAL, T.BufferStore(reg, T.BufferLoad(shared, [k * 2 + i]), [i]))
+    compute = T.For(j, 0, 2, T.ForKind.SERIAL, T.BufferStore(output, T.BufferLoad(reg, [j]), [k * 2 + j]))
+    loop = T.For(k, 0, 2, T.ForKind.SERIAL, T.SeqStmt([load, compute]), annotations={"register_pipeline_stage": 2})
+    before, after = _rewrite_loop(loop, shared, reg, output)
+    assert [b.name for b in after["main"].body.block.alloc_buffers] == ["reg_0", "reg_1", "output"]
+    assert _execute_scalar(before["main"], shared, output) == [10, 20, 30, 40]
+    assert _execute_scalar(after["main"], shared, output) == [10, 20, 30, 40]
+
+
+def test_predicated_load_does_not_establish_iteration_local_values():
+    shared = T.decl_buffer((2,), "float32", name="shared", scope="shared")
+    reg = T.decl_buffer((1,), "float32", name="reg", scope="local")
+    output = T.decl_buffer((2,), "float32", name="output", scope="local")
+    k = T.Var("k", "int32")
+    load = T.BufferStore(reg, T.BufferLoad(shared, [k]), [0], predicate=k == 0)
+    compute = T.BufferStore(output, T.BufferLoad(reg, [0]), [k])
+    loop = T.For(k, 0, 2, T.ForKind.SERIAL, T.SeqStmt([load, compute]), annotations={"register_pipeline_stage": 2})
+    _, after = _rewrite_loop(loop, shared, reg, output)
+    result = after["main"].body.block
+    assert isinstance(result.body, T.For)
+    assert [b.name for b in result.alloc_buffers] == ["reg", "output"]
+
+
+@pytest.mark.parametrize("matrix", [False, True])
+def test_mutable_address_metadata_keeps_original_schedule(matrix):
+    shared = T.decl_buffer((1024,), "float32", name="shared", scope="shared")
+    state = T.decl_buffer((1,), "int32", name="state", scope="local")
+    source_view = T.decl_buffer((4,), "float32", name="source_view", data=shared.data, scope="shared", elem_offset=T.BufferLoad(state, [0]))
+    reg = T.decl_buffer((4 if matrix else 1,), "float32", name="reg", scope="local")
+    output = T.decl_buffer((2,), "float32", name="output", scope="local")
+    k = T.Var("k", "int32")
+    load = T.BufferStore(reg, T.BufferLoad(source_view, [0]), [0])
+    if matrix:
+        src = T.Call("handle", tvm.ir.Op.get("tl.access_ptr"), [T.BufferLoad(source_view, [0]), 4, 1])
+        dst = T.Call("handle", tvm.ir.Op.get("tl.access_ptr"), [T.BufferLoad(reg, [0]), 4, 2])
+        load = T.Evaluate(T.Call("handle", tvm.ir.Op.get("tl.ptx_ldmatrix"), [False, 4, src, dst]))
+    consume = T.BufferStore(output, T.BufferLoad(reg, [0]), [k])
+    advance = T.BufferStore(state, k + 1, [0])
+    loop = T.For(k, 0, 2, T.ForKind.SERIAL, T.SeqStmt([load, consume, advance]), annotations={"register_pipeline_stage": 2})
+    body = T.SeqStmt([T.BufferStore(state, T.IntImm("int32", 0), [0]), loop])
+    block = T.SBlock([], [], [], "gemm", body, alloc_buffers=[state, reg, output])
+    func = T.PrimFunc([shared.data], T.SBlockRealize([], True, block))
+    result = tilelang.ppu.transform.RegisterPingPongPipeline()(tvm.IRModule({"main": func}))["main"]
+    assert T.analysis.verify_ssa(result)
+    assert [b.name for b in result.body.block.alloc_buffers] == ["state", "reg", "output"]
+    assert isinstance(result.body.block.body.seq[-1], T.For)
+    tvm.ir.assert_structural_equal(result.body.block.body.seq[-1].body, loop.body)

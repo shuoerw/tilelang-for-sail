@@ -15,6 +15,7 @@
  * so both main-loop and epilogue stages are correctly ping-pong unrolled.
  */
 
+#include <tvm/arith/analyzer.h>
 #include <tvm/ffi/memory.h>
 #include <tvm/ffi/reflection/registry.h>
 #include <tvm/runtime/logging.h>
@@ -28,10 +29,14 @@
 #include <tvm/tirx/stmt_functor.h>
 #include <tvm/tirx/transform.h>
 
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
+
+#include "tirx/transform/ir_utils.h"
 
 namespace tvm {
 namespace tl {
@@ -192,25 +197,9 @@ public:
     return routed;
   }
 
-  PrimExpr VisitExpr_(const CallNode *op) final {
-    Array<PrimExpr> args;
-    for (const auto &a : op->args) {
-      args.push_back(VisitExpr(a));
-    }
-    std::string name = GetOpName(op->op);
-    if (IsMmaOp(name)) {
-      // ptx_mma passes buf.data as an argument; replace by slot buffer's data
-      for (size_t idx = 0; idx < op->args.size(); idx++) {
-        const auto *var_node = op->args[idx].as<VarNode>();
-        if (var_node) {
-          auto it = slot_map_.find(GetRef<Var>(var_node));
-          if (it != slot_map_.end()) {
-            args.Set(idx, it->second->data);
-          }
-        }
-      }
-    }
-    return Call(op->dtype, op->op, args, op->annotations, op->span);
+  PrimExpr VisitExpr_(const VarNode *op) final {
+    auto it = slot_map_.find(GetRef<Var>(op));
+    return it == slot_map_.end() ? GetRef<Var>(op) : it->second->data;
   }
 
 private:
@@ -348,6 +337,192 @@ public:
     }
     StmtExprVisitor::VisitExpr_(op);
   }
+};
+
+// Only fixed register footprints can be split into independent iterations.
+// Track physical bits so typed views retain the same storage interpretation.
+class RegisterFootprints : public StmtExprVisitor {
+public:
+  using Span = std::pair<int64_t, int64_t>;
+  using Regions = std::unordered_map<Var, std::vector<Span>, ffi::ObjectPtrHash,
+                                     ffi::ObjectPtrEqual>;
+  bool safe = true;
+  Regions reads, writes;
+
+  explicit RegisterFootprints(const BufferSlotMap &allocations)
+      : allocations_(allocations) {}
+
+  bool ReadsCoveredBy(const RegisterFootprints &loads) const {
+    if (!safe || !loads.safe)
+      return false;
+    for (const auto &[var, required] : reads) {
+      auto it = loads.writes.find(var);
+      if (it == loads.writes.end())
+        return false;
+      auto defined = it->second;
+      std::sort(defined.begin(), defined.end());
+      for (const auto &[begin, end] : required) {
+        int64_t covered = begin;
+        for (const auto &[lo, hi] : defined) {
+          if (lo > covered)
+            break;
+          covered = std::max(covered, hi);
+        }
+        if (covered < end)
+          return false;
+      }
+    }
+    return true;
+  }
+
+private:
+  void VisitBufferUse(const Buffer &buffer) final {
+    auto check = [&](const PrimExpr &expr) {
+      if (SideEffect(expr) != CallEffectKind::kPure ||
+          UsesVar(expr, [&](const VarNode *var) {
+            return allocations_.count(GetRef<Var>(var)) != 0;
+          }))
+        safe = false;
+    };
+    check(buffer->elem_offset);
+    for (const PrimExpr &dim : buffer->shape)
+      check(dim);
+    for (const PrimExpr &stride : buffer->strides)
+      check(stride);
+  }
+
+  void Add(Regions *regions, const Buffer &buffer,
+           const Array<PrimExpr> &indices, PrimExpr count) {
+    auto allocation = allocations_.find(buffer->data);
+    if (allocation == allocations_.end())
+      return;
+    const Buffer &storage = allocation->second;
+    if (!storage->strides.empty() || !is_zero(storage->elem_offset) ||
+        !storage->dtype.is_scalar() || !buffer->dtype.is_scalar() ||
+        indices.size() != buffer->shape.size()) {
+      safe = false;
+      return;
+    }
+    PrimExpr size = Integer(storage->dtype.bits());
+    for (const PrimExpr &dim : storage->shape)
+      size = size * dim;
+    PrimExpr offset = buffer->elem_offset;
+    PrimExpr stride = Integer(1);
+    for (int axis = static_cast<int>(indices.size()) - 1; axis >= 0; --axis) {
+      offset = offset +
+               indices[axis] *
+                   (buffer->strides.empty() ? stride : buffer->strides[axis]);
+      stride = stride * buffer->shape[axis];
+    }
+    auto total = analyzer_.Simplify(size).as<IntImm>();
+    auto start = analyzer_.Simplify(offset * buffer->dtype.bits()).as<IntImm>();
+    auto bits = analyzer_.Simplify(count * buffer->dtype.bits()).as<IntImm>();
+    if (!total || !start || !bits || start.value()->value < 0 ||
+        bits.value()->value <= 0 ||
+        start.value()->value > total.value()->value - bits.value()->value) {
+      safe = false;
+      return;
+    }
+    (*regions)[buffer->data].emplace_back(
+        start.value()->value, start.value()->value + bits.value()->value);
+  }
+
+  void Pointer(const PrimExpr &expr, Regions *regions,
+               int64_t instruction_bits = 0) {
+    const auto *ptr = expr.as<CallNode>();
+    const auto *load =
+        ptr && GetOpName(ptr->op) == "tl.access_ptr" && ptr->args.size() == 3
+            ? ptr->args[0].as<BufferLoadNode>()
+            : nullptr;
+    if (!load) {
+      safe = false;
+      return;
+    }
+    if (instruction_bits &&
+        !analyzer_.CanProveEqual(ptr->args[1] * load->buffer->dtype.bits(),
+                                 Integer(instruction_bits))) {
+      safe = false;
+      return;
+    }
+    VisitBufferUse(load->buffer);
+    Add(regions, load->buffer, load->indices, ptr->args[1]);
+  }
+
+  void VisitStmt_(const ForNode *op) final {
+    const auto *minimum = op->min.as<IntImmNode>();
+    const auto *extent = op->extent.as<IntImmNode>();
+    if (!minimum || !extent || extent->value < 0 ||
+        extent->value > remaining_iterations_ ||
+        (op->step.defined() && !is_one(op->step.value())) ||
+        (op->kind != ForKind::kSerial && op->kind != ForKind::kUnrolled)) {
+      safe = false;
+      return;
+    }
+    remaining_iterations_ -= extent->value;
+    for (int64_t i = 0; safe && i < extent->value; ++i) {
+      Map<Var, PrimExpr> values;
+      values.Set(op->loop_var,
+                 IntImm(op->loop_var.dtype(), minimum->value + i));
+      VisitStmt(Substitute(op->body, values));
+    }
+  }
+
+  void VisitStmt_(const BufferStoreNode *op) final {
+    if (op->predicate.defined() && !is_one(op->predicate.value()))
+      safe = false;
+    Add(&writes, op->buffer, op->indices, Integer(1));
+    StmtExprVisitor::VisitStmt_(op);
+  }
+
+  void VisitExpr_(const BufferLoadNode *op) final {
+    if (op->predicate.defined() && !is_one(op->predicate.value()))
+      safe = false;
+    Add(&reads, op->buffer, op->indices, Integer(1));
+    StmtExprVisitor::VisitExpr_(op);
+  }
+
+  void VisitExpr_(const VarNode *op) final {
+    auto it = allocations_.find(GetRef<Var>(op));
+    if (it == allocations_.end())
+      return;
+    Array<PrimExpr> indices;
+    PrimExpr count = Integer(1);
+    for (const PrimExpr &dim : it->second->shape) {
+      indices.push_back(Integer(0));
+      count = count * dim;
+    }
+    Add(&reads, it->second, indices, count);
+  }
+
+  void VisitExpr_(const CallNode *op) final {
+    const std::string name = GetOpName(op->op);
+    if (IsLdmatrixOp(name)) {
+      const bool swizzled = name == "tl.tix_ldmatrix_swzl";
+      const bool b8 = name == "tl.tix_ldmatrix_b8";
+      const auto *num =
+          op->args.size() > 1 ? op->args[1].as<IntImmNode>() : nullptr;
+      if (op->args.size() != (swizzled ? 6U : 4U) || !num ||
+          (num->value != 1 && num->value != 2 && num->value != 4) ||
+          (b8 && num->value != 2) || (swizzled && num->value != 4)) {
+        safe = false;
+        return;
+      }
+      Pointer(op->args[3], &writes, num->value * (b8 ? 64 : 32));
+      for (size_t i = 0; i < op->args.size(); ++i) {
+        if (i != 3)
+          VisitExpr(op->args[i]);
+      }
+      return;
+    }
+    if (name == "tl.access_ptr")
+      Pointer(GetRef<PrimExpr>(op), &reads);
+    else
+      StmtExprVisitor::VisitExpr_(op);
+  }
+
+  const BufferSlotMap &allocations_;
+  arith::Analyzer analyzer_;
+  int64_t remaining_iterations_{1024};
 };
 
 // ---------------------------------------------------------------------------
@@ -521,11 +696,13 @@ public:
     std::unordered_map<Var, std::vector<Buffer>, ffi::ObjectPtrHash,
                        ffi::ObjectPtrEqual>
         slot_buffers;
+    BufferSlotMap allocations;
     for (const Buffer &buf : op->alloc_buffers) {
       if (!pingpong.count(buf->data))
         continue;
       if (GetBufferScope(buf) != "local")
         return StripAndReturn(block, ann_loop);
+      allocations.emplace(buf->data, buf);
       std::vector<Buffer> bufs;
       bufs.reserve(factor);
       for (int slot = 0; slot < factor; slot++) {
@@ -590,6 +767,14 @@ public:
         return StripAndReturn(block, ann_loop);
       }
     }
+
+    RegisterFootprints definitions(allocations), uses(allocations);
+    for (const Stmt &stmt : load_stmts)
+      definitions(stmt);
+    for (const Stmt &stmt : compute_stmts)
+      uses(stmt);
+    if (!uses.ReadsCoveredBy(definitions))
+      return StripAndReturn(block, ann_loop);
 
     // Build slot map for a given slot index
     auto build_slot_map = [&slot_buffers](int slot) {
@@ -706,7 +891,7 @@ static PrimFunc RegisterPingPongPipelineImpl(PrimFunc func) {
     return func;
 
   auto fptr = func.CopyOnWrite();
-  fptr->body = std::move(new_body);
+  fptr->body = tirx::ConvertSSA(std::move(new_body));
   return func;
 }
 
