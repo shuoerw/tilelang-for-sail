@@ -331,7 +331,7 @@ def test_unproven_schedules_are_unchanged(unsafe):
     tvm.ir.assert_structural_equal(_schedule(mod), mod)
 
 
-@pytest.mark.parametrize("dependency", [None, "memory_read", "consumer_use"])
+@pytest.mark.parametrize("dependency", [None, "memory_read", "pointer_memory_read", "consumer_use"])
 def test_replayed_bindings_require_independence(dependency):
     mod = _module()
 
@@ -342,9 +342,13 @@ def test_replayed_bindings_require_independence(dependency):
         region, load = copy.args[0], copy.args[0].args[0]
         bound = tirx.Var("source_column", "int32")
         value = load.indices[-1]
-        if dependency == "memory_read":
+        if dependency in ("memory_read", "pointer_memory_read"):
             output = next(_events(stmts[-1])).args[2].args[0].buffer
-            value = tirx.Cast("int32", tirx.BufferLoad(output, [0, 0]))
+            value = (
+                tirx.call_pure_extern("int32", "read_offset", output.data)
+                if dependency == "pointer_memory_read"
+                else tirx.Cast("int32", tirx.BufferLoad(output, [0, 0]))
+            )
         indices = [*load.indices[:-1], bound]
         source = tirx.Call(region.dtype, region.op, [tirx.BufferLoad(load.buffer, indices), *region.args[1:]])
         call = tirx.Call(copy.dtype, copy.op, [source, *copy.args[1:]], annotations=copy.annotations)
@@ -429,3 +433,104 @@ def test_volatile_accesses_are_unchanged():
     func = func.with_body(tirx.AttrStmt(source.data, "volatile_scope", 1, func.body))
     mod = tvm.IRModule({"main": func})
     tvm.ir.assert_structural_equal(_schedule(mod), mod)
+
+
+def test_volatile_allocation_keeps_copy_schedule():
+    mod = _module()
+    func = mod["main"]
+    shared = next(b for b in _allocations(mod) if b.scope().startswith("shared"))
+
+    def move_allocation(node):
+        if isinstance(node, tirx.SBlock) and any(b.same_as(shared) for b in node.alloc_buffers):
+            return tirx.SBlock(
+                node.iter_vars,
+                node.reads,
+                node.writes,
+                node.name_hint,
+                tirx.SeqStmt([tirx.AllocBuffer(shared, annotations={"tirx.volatile": True}), node.body]),
+                init=node.init,
+                alloc_buffers=[b for b in node.alloc_buffers if not b.same_as(shared)],
+                match_buffers=node.match_buffers,
+                annotations=node.annotations,
+            )
+
+    func = func.with_body(tirx.stmt_functor.ir_transform(func.body, None, move_allocation, ["tirx.SBlock"]))
+    before = tvm.IRModule({"main": func})
+    tvm.ir.assert_structural_equal(_schedule(before), before)
+
+
+@pytest.mark.parametrize("descriptor", ["elem_offset", "strides", "shape", "data"])
+def test_consumer_descriptors_require_producer_bindings(descriptor):
+    @T.prim_func
+    def main(
+        A: T.Tensor((128, 512), T.float4_e2m1fn),
+        B: T.Tensor((128, 512), T.float4_e2m1fn),
+        SFA: T.Tensor((16, 128), T.uint16),
+        SFB: T.Tensor((16, 128), T.uint16),
+        C: T.Tensor((128, 128), T.float32),
+    ):
+        with T.Kernel(1, threads=128):
+            a = T.alloc_shared((128, 64), T.float4_e2m1fn)
+            b = T.alloc_shared((128, 64), T.float4_e2m1fn)
+            c = T.alloc_fragment((128, 128), T.float32)
+            T.clear(c)
+            for k in T.Pipelined(8, num_stages=3):
+                T.copy(A[:, k * 64 : (k + 1) * 64], a)
+                T.copy(B[:, k * 64 : (k + 1) * 64], b)
+                T.gemm(a, b, c, transpose_B=True, scale_A=SFA[k : k + 1, :], scale_B=SFB[k : k + 1, :])
+            T.copy(c, C)
+
+    mod = tvm.IRModule.from_expr(main)
+    mod = tirx.transform.BindTarget(TARGET)(mod)
+    mod = tl.transform.IfStmtBinding()(mod)
+    mod = tl.transform.PipelinePlanning()(mod)
+    mod = tl.transform.InjectSoftwarePipeline()(mod)
+    assert _ops(_loops(_schedule(mod))[0].body)[0] == ("tirx.ptx_wait_group", 1)
+    scale = next(call for call in _events(_loops(mod)[0].body) if call.op.name == "tl.tileop.gemm_blockscaled").args[13].args[0].buffer
+    binding = tirx.Var("scale_descriptor", scale.data.type_annotation if descriptor == "data" else "int32")
+
+    def mutate(body):
+        stmts = list(body.seq)
+        first = stmts[0]
+        block = first.block
+        stmts[0] = tirx.SBlockRealize(
+            first.iter_values,
+            first.predicate,
+            tirx.SBlock(
+                block.iter_vars,
+                block.reads,
+                block.writes,
+                block.name_hint,
+                tirx.SeqStmt([tirx.Bind(binding, scale.data if descriptor == "data" else _loops(mod)[0].loop_var * 128), block.body]),
+                alloc_buffers=block.alloc_buffers,
+            ),
+        )
+
+        def change(node):
+            if isinstance(node, tirx.Call) and node.op.name == "tl.tileop.gemm_blockscaled":
+                args = list(node.args)
+                region = args[13]
+                load = region.args[0]
+                shape, strides, offset = list(load.buffer.shape), list(load.buffer.strides), load.buffer.elem_offset
+                if descriptor == "elem_offset":
+                    offset = binding
+                elif descriptor == "strides":
+                    strides = [binding, 1]
+                elif descriptor == "shape":
+                    shape[0] = binding
+                view = tirx.decl_buffer(
+                    shape,
+                    load.buffer.dtype,
+                    name="scale_view",
+                    data=binding if descriptor == "data" else load.buffer.data,
+                    strides=strides,
+                    elem_offset=offset,
+                )
+                args[13] = tirx.Call(region.dtype, region.op, [tirx.BufferLoad(view, load.indices), *region.args[1:]])
+                return tirx.Call(node.dtype, node.op, args, annotations=node.annotations)
+
+        stmts[-1] = tirx.stmt_functor.ir_transform(stmts[-1], None, change, ["tirx.Call"])
+        return tirx.SeqStmt(stmts)
+
+    before = _mutate_steady_loop(mod, mutate)
+    tvm.ir.assert_structural_equal(_schedule(before), before)

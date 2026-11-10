@@ -36,6 +36,7 @@
 #include <utility>
 #include <vector>
 
+#include "op/builtin.h"
 #include "tirx/transform/ir_utils.h"
 
 namespace tvm {
@@ -248,19 +249,34 @@ static bool StmtIsLoad(const Stmt &stmt, const VarSet &pingpong_vars) {
 // Slot storage must be private to the rewritten loop, including through views
 // and raw pointers used by surrounding initialization or epilogue statements.
 static bool ReferencesAny(const Stmt &stmt, const VarSet &data_vars) {
-  bool found = false;
-  PostOrderVisit(stmt, [&](const ObjectRef &obj) {
-    if (const auto *load = obj.as<BufferLoadNode>()) {
-      found |= data_vars.count(load->buffer->data) != 0;
-    } else if (const auto *store = obj.as<BufferStoreNode>()) {
-      found |= data_vars.count(store->buffer->data) != 0;
-    } else if (const auto *decl = obj.as<DeclBufferNode>()) {
-      found |= data_vars.count(decl->buffer->data) != 0;
-    } else if (auto var = obj.as<Var>()) {
-      found |= data_vars.count(var.value()) != 0;
+  class ReferenceVisitor : public StmtExprVisitor {
+  public:
+    explicit ReferenceVisitor(const VarSet &data_vars)
+        : data_vars_(data_vars) {}
+    bool found = false;
+
+    void VisitExpr_(const VarNode *op) final {
+      found |= data_vars_.count(GetRef<Var>(op)) != 0;
     }
-  });
-  return found;
+
+    void VisitBufferUse(const Buffer &buffer) final {
+      if (!visited_.insert(buffer).second)
+        return;
+      found |= data_vars_.count(buffer->data) != 0;
+      StmtExprVisitor::VisitBufferDef(buffer, false);
+    }
+
+    void VisitBufferDef(const Buffer &buffer, bool) final {
+      VisitBufferUse(buffer);
+    }
+
+  private:
+    const VarSet &data_vars_;
+    std::unordered_set<Buffer, ffi::ObjectPtrHash, ffi::ObjectPtrEqual>
+        visited_;
+  } visitor(data_vars);
+  visitor(stmt);
+  return visitor.found;
 }
 
 // Only reorder understood memory operations. Unknown calls, barriers, and
@@ -285,10 +301,14 @@ public:
     StmtExprVisitor::VisitStmt_(op);
   }
 
-  void VisitStmt_(const IfThenElseNode *) final { safe = false; }
-  void VisitStmt_(const BindNode *) final { safe = false; }
-  void VisitStmt_(const SBlockNode *) final { safe = false; }
-  void VisitStmt_(const AttrStmtNode *) final { safe = false; }
+  void VisitStmt(const Stmt &stmt) final {
+    if (!stmt.as<SeqStmtNode>() && !stmt.as<ForNode>() &&
+        !stmt.as<BufferStoreNode>() && !stmt.as<EvaluateNode>()) {
+      safe = false;
+      return;
+    }
+    StmtExprVisitor::VisitStmt(stmt);
+  }
 
   void VisitExpr_(const CallNode *op) final {
     const std::string name = GetOpName(op->op);
@@ -318,11 +338,15 @@ public:
     if (IsMmaOp(name)) {
       // Treat every pointer operand conservatively as both read and written.
       for (const PrimExpr &arg : op->args) {
-        if (const auto *var = arg.as<VarNode>();
-            var && var->dtype.is_handle()) {
-          reads.insert(GetRef<Var>(var));
-          writes.insert(GetRef<Var>(var));
+        if (!arg.dtype().is_handle() || arg.as<StringImmNode>())
+          continue;
+        const auto *var = arg.as<VarNode>();
+        if (!var) {
+          safe = false;
+          return;
         }
+        reads.insert(GetRef<Var>(var));
+        writes.insert(GetRef<Var>(var));
       }
     } else if (name != "tl.access_ptr") {
       // Inspect the callee's effect separately from argument reads. Pure
@@ -879,9 +903,25 @@ public:
 // ---------------------------------------------------------------------------
 
 static PrimFunc RegisterPingPongPipelineImpl(PrimFunc func) {
-  // Apply the per-SBlock rewriter
-  RegisterPingPongRewriter rewriter;
-  Stmt new_body = rewriter(func->body);
+  bool unsupported_metadata =
+      func->attrs.defined() && func->attrs->dict.count(attr::kSafeValueMap);
+  PostOrderVisit(func->body, [&](const ObjectRef &node) {
+    if (const auto *attribute = node.as<AttrStmtNode>()) {
+      unsupported_metadata |= attribute->attr_key == "volatile_scope" ||
+                              attribute->attr_key == attr::kSafeValueMap;
+    } else if (const auto *allocation = node.as<AllocBufferNode>()) {
+      unsupported_metadata |=
+          allocation->annotations.count(tirx::attr::kVolatile) != 0;
+    } else if (const auto *block = node.as<SBlockNode>()) {
+      unsupported_metadata |=
+          block->annotations.count(attr::kSafeValueMap) != 0;
+    }
+  });
+  Stmt new_body = func->body;
+  if (!unsupported_metadata) {
+    RegisterPingPongRewriter rewriter;
+    new_body = rewriter(new_body);
+  }
 
   // Safety net: strip any remaining annotations that weren't processed
   StripAnnotationMutator stripper;

@@ -50,7 +50,9 @@ const CallNode *TileCall(Stmt stmt, VarSet *bindings = nullptr) {
       // read memory or define values needed by the preceding consumer.
       for (size_t i = 0; i + 1 < seq->seq.size(); ++i) {
         const auto *bind = seq->seq[i].as<BindNode>();
-        if (!bind || SideEffect(bind->value) != CallEffectKind::kPure)
+        if (!bind || SideEffect(bind->value) != CallEffectKind::kPure ||
+            UsesVar(bind->value,
+                    [](const VarNode *var) { return var->dtype.is_handle(); }))
           return nullptr;
         bindings->insert(bind->var);
       }
@@ -86,6 +88,25 @@ bool PureAddress(const BufferRegion &region) {
       return false;
   }
   return true;
+}
+
+bool BufferUsesAny(const Buffer &buffer, const VarSet &variables) {
+  auto uses = [&](const PrimExpr &expr) {
+    return UsesVar(expr, [&](const VarNode *var) {
+      return variables.count(GetRef<Var>(var)) != 0;
+    });
+  };
+  if (uses(buffer->data) || uses(buffer->elem_offset))
+    return true;
+  for (const PrimExpr &size : buffer->shape) {
+    if (uses(size))
+      return true;
+  }
+  for (const PrimExpr &stride : buffer->strides) {
+    if (uses(stride))
+      return true;
+  }
+  return false;
 }
 
 bool PureScalarArguments(const CallNode *call) {
@@ -127,6 +148,8 @@ public:
             block->annotations.count(attr::kSafeValueMap) != 0;
       } else if (const auto *alloc = node.as<AllocBufferNode>()) {
         record(alloc->buffer);
+        has_unsupported_annotations_ |=
+            alloc->annotations.count(tirx::attr::kVolatile) != 0;
       } else if (const auto *attribute = node.as<AttrStmtNode>()) {
         has_unsupported_annotations_ |=
             attribute->attr_key == attr::kLayoutMap ||
@@ -264,6 +287,14 @@ private:
           return bindings.count(GetRef<Var>(var)) != 0;
         }))
       return loop;
+    for (const BufferRegion &read : access.reads) {
+      if (BufferUsesAny(read->buffer, bindings))
+        return loop;
+    }
+    for (const BufferRegion &write : access.writes) {
+      if (BufferUsesAny(write->buffer, bindings))
+        return loop;
+    }
 
     // Moving this iteration's commit after the wait removes one newer group
     // from the FIFO. Waiting for one fewer group preserves the completed

@@ -68,6 +68,9 @@ def _scalar_pipeline(minimum=0, unsafe=None):
         stmts[0] = T.IfThenElse(k < 1, load, None)
     elif unsafe == "unknown_call":
         stmts.insert(1, T.Evaluate(T.call_extern("int32", "unknown_write", shared.data)))
+    elif unsafe == "allocation":
+        scratch = T.decl_buffer((16,), "float32", name="scratch", scope="shared")
+        stmts = [T.AllocBuffer(scratch), T.BufferStore(local, T.BufferLoad(scratch, [k]), [0]), compute]
     loop = T.For(k, minimum, 2, T.ForKind.SERIAL, T.SeqStmt(stmts), annotations={"register_pipeline_stage": 2})
     block = T.SBlock([], [], [], "pipeline", loop, init=init, alloc_buffers=[local, output])
     func = T.PrimFunc([shared.data], T.SBlockRealize([], True, block))
@@ -84,7 +87,9 @@ def test_nonzero_loop_minimum_is_preserved():
     assert [b.name for b in result.alloc_buffers] == ["reg_0", "reg_1", "output"]
 
 
-@pytest.mark.parametrize("unsafe", ["shared_write", "alias_write", "barrier", "init", "load_after_compute", "conditional", "unknown_call"])
+@pytest.mark.parametrize(
+    "unsafe", ["shared_write", "alias_write", "barrier", "init", "load_after_compute", "conditional", "unknown_call", "allocation"]
+)
 def test_unsafe_pipeline_keeps_original_storage_and_order(unsafe):
     result = _scalar_pipeline(unsafe=unsafe)
     assert isinstance(result.body, T.For)
@@ -128,7 +133,21 @@ def test_pipeline_preserves_typed_strided_view_reads_and_writes():
             assert tvm.ir.structural_equal(access.indices, indices)
 
 
-@pytest.mark.parametrize("outside_use", [None, "read", "write", "pointer", "declaration"])
+@pytest.mark.parametrize(
+    "outside_use",
+    [
+        None,
+        "read",
+        "write",
+        "pointer",
+        "declaration",
+        "descriptor_offset",
+        "descriptor_shape",
+        "descriptor_stride",
+        "descriptor_decl",
+        "descriptor_nested",
+    ],
+)
 @pytest.mark.parametrize("position", ["prefix", "suffix"])
 def test_pipeline_preserves_surrounding_statements_and_storage(outside_use, position):
     shared = T.decl_buffer((2,), "float32", name="shared", scope="shared")
@@ -148,6 +167,22 @@ def test_pipeline_preserves_surrounding_statements_and_storage(outside_use, posi
         surrounding = T.Evaluate(T.call_extern("int32", "escape", reg.data))
     elif outside_use == "declaration":
         surrounding = T.DeclBuffer(view)
+    elif outside_use and outside_use.startswith("descriptor_"):
+        reference = T.Cast("int32", T.BufferLoad(reg, [0]))
+        options = {"elem_offset": reference}
+        shape = (1,)
+        if outside_use == "descriptor_shape":
+            options = {}
+            shape = (reference,)
+        elif outside_use == "descriptor_stride":
+            options = {"strides": [reference]}
+        elif outside_use == "descriptor_nested":
+            inner = T.decl_buffer((1,), "float32", name="inner", scope="local", data=output.data, elem_offset=reference)
+            options = {"elem_offset": T.Cast("int32", T.BufferLoad(inner, [0]))}
+        descriptor = T.decl_buffer(shape, "float32", name="descriptor", scope="local", data=output.data, **options)
+        surrounding = (
+            T.DeclBuffer(descriptor) if outside_use == "descriptor_decl" else T.BufferStore(descriptor, T.FloatImm("float32", 0), [0])
+        )
     body = T.SeqStmt([surrounding, loop] if position == "prefix" else [loop, surrounding])
     block = T.SBlock([], [], [], "gemm", body, alloc_buffers=[reg, output], annotations={"test_metadata": 1})
     func = T.PrimFunc([shared.data], T.SBlockRealize([], True, block))
@@ -377,3 +412,70 @@ def test_mutable_address_metadata_keeps_original_schedule(matrix):
     assert [b.name for b in result.body.block.alloc_buffers] == ["state", "reg", "output"]
     assert isinstance(result.body.block.body.seq[-1], T.For)
     tvm.ir.assert_structural_equal(result.body.block.body.seq[-1].body, loop.body)
+
+
+@pytest.mark.parametrize("pointer", ["bare", "access_ptr", "forwarded"])
+def test_opaque_mma_pointer_operands_keep_dependencies(pointer):
+    shared = T.decl_buffer((4096,), "float16", name="shared", scope="shared")
+    reg = T.decl_buffer((8,), "float16", name="reg", scope="local")
+    b = T.decl_buffer((8,), "float16", name="B", scope="local")
+    accum = T.decl_buffer((8,), "float32", name="accum", scope="local")
+    k, i = T.Var("k", "int32"), T.Var("i", "int32")
+    index = k * 8 + i + T.Cast("int32", T.BufferLoad(accum, [0]))
+    load = T.For(i, 0, 8, T.ForKind.SERIAL, T.BufferStore(reg, T.BufferLoad(shared, [index]), [i]))
+    destination = accum.data
+    if pointer == "access_ptr":
+        destination = T.Call("handle", tvm.ir.Op.get("tl.access_ptr"), [T.BufferLoad(accum, [0]), 8, 3])
+    elif pointer == "forwarded":
+        destination = T.call_pure_extern("handle", "forward_accumulator", accum.data)
+    args = ["m16n16k16", "row", "col", "fp16", "fp16", "fp32", reg.data, 0, b.data, 0, destination, 0, False]
+    compute = T.Evaluate(T.Call("float32", tvm.ir.Op.get("tirx.ptx_mma"), args))
+    loop = T.For(k, 0, 2, T.ForKind.SERIAL, T.SeqStmt([load, compute]), annotations={"register_pipeline_stage": 2})
+    body = T.SeqStmt([T.BufferStore(accum, T.FloatImm("float32", 0), [0]), loop])
+    block = T.SBlock([], [], [], "gemm", body, alloc_buffers=[reg, accum])
+    func = T.PrimFunc([shared.data, b.data], T.SBlockRealize([], True, block))
+    result = tilelang.ppu.transform.RegisterPingPongPipeline()(tvm.IRModule({"main": func}))["main"]
+    retained = result.body.block.body.seq[-1]
+    assert isinstance(retained, T.For)
+    tvm.ir.assert_structural_equal(retained.body, loop.body)
+    assert [b.name for b in result.body.block.alloc_buffers] == ["reg", "accum"]
+
+
+@pytest.mark.parametrize(
+    "metadata,key",
+    [(metadata, key) for metadata in ["volatile_scope", "safe_function", "safe_block", "safe_scope"] for key in ["register", "shared"]]
+    + [("volatile_allocation", "shared")],
+)
+def test_enclosing_metadata_preserves_register_schedule(metadata, key):
+    shared = T.decl_buffer((2,), "float32", name="shared", scope="shared")
+    reg = T.decl_buffer((1,), "float32", name="reg", scope="local")
+    output = T.decl_buffer((2,), "float32", name="output", scope="local")
+    k = T.Var("k", "int32")
+    load = T.BufferStore(reg, T.BufferLoad(shared, [k]), [0])
+    consume = T.BufferStore(output, T.BufferLoad(reg, [0]), [k])
+    loop = T.For(k, 0, 2, T.ForKind.SERIAL, T.SeqStmt([load, consume]), annotations={"register_pipeline_stage": 2})
+    data = reg.data if key == "register" else shared.data
+    mapping = {data: T.BufferLoad(output, [0])}
+    annotations = {"safe_value_map": mapping} if metadata == "safe_block" else {}
+    block = T.SBlock([], [], [], "gemm", loop, alloc_buffers=[reg, output], annotations=annotations)
+    body = T.SBlockRealize([], True, block)
+    params = [shared.data]
+    if metadata == "volatile_scope":
+        body = T.AttrStmt(data, "volatile_scope", 1, body)
+    elif metadata == "volatile_allocation":
+        params = []
+        body = T.SeqStmt([T.AllocBuffer(shared, annotations={"tirx.volatile": True}), body])
+    elif metadata == "safe_scope":
+        body = T.AttrStmt(mapping, "safe_value_map", 0, body)
+    func = T.PrimFunc(params, body)
+    if metadata == "safe_function":
+        func = func.with_attr("safe_value_map", mapping)
+    result = tilelang.ppu.transform.RegisterPingPongPipeline()(tvm.IRModule({"main": func}))["main"]
+    loops, blocks = [], []
+    T.stmt_functor.post_order_visit(
+        result.body, lambda n: loops.append(n) if isinstance(n, T.For) else blocks.append(n) if isinstance(n, T.SBlock) else None
+    )
+    assert len(loops) == 1
+    assert "register_pipeline_stage" not in loops[0].annotations
+    tvm.ir.assert_structural_equal(loops[0].body, loop.body)
+    assert [b.name for b in blocks[0].alloc_buffers] == ["reg", "output"]
