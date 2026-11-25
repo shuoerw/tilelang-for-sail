@@ -47,11 +47,6 @@ def InjectPpuUniform():
     return _ffi_api.InjectPpuUniform()  # type: ignore
 
 
-def SchedulePipelineCopies():
-    """Place independent future copy groups after their current GEMM consumer."""
-    return _ffi_api.SchedulePipelineCopies()  # type: ignore
-
-
 def RegisterPingPongPipeline():
     """Rewrite annotated inner GEMM loops into 2-slot register pipelines."""
     return _ffi_api.RegisterPingPongPipeline()  # type: ignore
@@ -95,7 +90,6 @@ def PersistThreadblock():
 __all__ = [
     "LowerThreadAllreduce",
     "LowerL2Persistent",
-    "SchedulePipelineCopies",
     "RegisterPingPongPipeline",
     "LowerL2PersistentCache",
     "LowerLDGSTG",
